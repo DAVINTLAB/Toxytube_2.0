@@ -1,0 +1,6 @@
+**/__pycache__/
+.conda/
+aplication/python/lib/
+aplication/python/etc/
+aplication/python/Scripts/
+aplication/python/share/
