@@ -72,6 +72,16 @@ def render_navigation(current_page):
             st.session_state.confirm_navigation = True
             st.rerun()
 
+    if st.sidebar.button(
+        "🛡️ Detoxify Classifier",
+        use_container_width=True,
+        type="primary" if current_page == 'detoxify' else "secondary"
+    ):
+        if current_page != 'detoxify':
+            st.session_state.target_page = "pages/4_Detoxify_Classifier.py"
+            st.session_state.confirm_navigation = True
+            st.rerun()
+
     # Show confirmation dialog
     if st.session_state.confirm_navigation and st.session_state.target_page:
         with st.sidebar:
