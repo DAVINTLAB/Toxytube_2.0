@@ -82,6 +82,16 @@ def render_navigation(current_page):
             st.session_state.confirm_navigation = True
             st.rerun()
 
+    if st.sidebar.button(
+        "🧠 LLM Classifier",
+        use_container_width=True,
+        type="primary" if current_page == 'llm' else "secondary"
+    ):
+        if current_page != 'llm':
+            st.session_state.target_page = "pages/5_LLM_Classifier.py"
+            st.session_state.confirm_navigation = True
+            st.rerun()
+
     # Show confirmation dialog
     if st.session_state.confirm_navigation and st.session_state.target_page:
         with st.sidebar:
