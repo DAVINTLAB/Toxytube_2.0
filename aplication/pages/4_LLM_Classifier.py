@@ -1,6 +1,6 @@
 """
 LLM Classification Page
-Implements text classification workflow using LiteLLM and DSPy
+Implements text classification workflow using LiteLLM and DSPy with global dataset
 """
 import streamlit as st
 import pandas as pd
@@ -29,27 +29,69 @@ from components.llm_classifier import (
 # Dictionary with all data needed for the LLM classification process
 if 'llmData' not in st.session_state:
     st.session_state.llmData = {
-        'dataset': None,                    # Dataset loaded by user
-        'textColumn': None,                 # Column selected for classification
         'selectedProvider': None,           # Selected LLM provider
         'selectedModel': None,              # Selected LLM model ID
         'apiKey': '',                        # API key
         'apiKeyValidated': False,           # API key validation status
         'promptInstructions': '',           # Classification instructions
         'promptLabels': '',                 # Optional: comma-separated labels
-        'outputDirectory': os.path.expanduser('~/Downloads'),  # Output directory
-        'outputFileName': f"llm_classification_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
-        'outputFormat': 'csv',              # File format
         'classificationResults': None,      # Classification results
         'isExecuting': False,               # Execution status
-        'fileSaved': False                  # File saved status
     }
+
+# Initialize global data if not exists
+if 'globalData' not in st.session_state:
+    st.session_state.globalData = {
+        'dataset': None,
+        'textColumn': None,
+        'outputDirectory': os.path.expanduser('~/Downloads'),
+        'outputFileName': '',
+        'outputFormat': 'csv',
+        'datasetLoaded': False,
+        'originalFileName': ''
+    }
+
+# =============================================================================
+# Helper Functions
+# =============================================================================
+
+def save_global_dataset():
+    """Save the global dataset to the configured output path"""
+    if st.session_state.globalData['dataset'] is None:
+        return False, "No dataset loaded"
+    
+    try:
+        output_dir = st.session_state.globalData['outputDirectory']
+        output_name = st.session_state.globalData['outputFileName']
+        output_format = st.session_state.globalData['outputFormat']
+        
+        # Create directory if it doesn't exist
+        os.makedirs(output_dir, exist_ok=True)
+        
+        # Build full path
+        full_path = os.path.join(output_dir, f"{output_name}.{output_format}")
+        
+        # Save based on format
+        df = st.session_state.globalData['dataset']
+        
+        if output_format == 'csv':
+            df.to_csv(full_path, index=False)
+        elif output_format == 'xlsx':
+            df.to_excel(full_path, index=False)
+        elif output_format == 'json':
+            df.to_json(full_path, orient='records', indent=2)
+        elif output_format == 'parquet':
+            df.to_parquet(full_path, index=False)
+        
+        return True, full_path
+    except Exception as e:
+        return False, str(e)
 
 # =============================================================================
 # Page Configuration
 # =============================================================================
 
-st.set_page_config(page_title="LLM Classifier - Toxytube", page_icon="🧠", layout="wide")
+st.set_page_config(page_title="LLM Classifier - Toxicytube", page_icon="🧠", layout="wide")
 
 # Render navigation sidebar
 render_navigation('llm')
@@ -65,109 +107,54 @@ st.markdown("Classify text using Large Language Models via LiteLLM and DSPy. Bui
 st.markdown("---")
 
 # =============================================================================
-# Step 1: Dataset Selection
+# Global Dataset Preview
 # =============================================================================
 
-# Check if step 1 is complete
-step1_complete = (
-    st.session_state.llmData['dataset'] is not None and
-    st.session_state.llmData['textColumn'] is not None
-)
-
 with st.container(border=True):
-    st.markdown("### 📁 Step 1: Dataset Selection")
-    st.markdown("Upload a file for LLM-based text classification.")
-
-    uploadedFile = st.file_uploader("Select a file:", type=['csv', 'json', 'xlsx', 'xls'], key="llm_uploader")
-
-    if uploadedFile is not None:
-        try:
-            # Load dataset based on file type
-            file_extension = uploadedFile.name.split('.')[-1].lower()
-
-            if file_extension == 'csv':
-                dataset = pd.read_csv(uploadedFile)
-            elif file_extension in ['xlsx', 'xls']:
-                dataset = pd.read_excel(uploadedFile)
-            elif file_extension == 'json':
-                dataset = pd.read_json(uploadedFile)
-            else:
-                st.error(f"❌ File format not supported: {file_extension}")
-                dataset = None
-
-            if dataset is not None:
-                st.session_state.llmData['dataset'] = dataset
-
-        except Exception as e:
-            st.error(f"❌ Error loading file: {str(e)}")
-
-    # Preview the dataset if loaded
-    if st.session_state.llmData['dataset'] is not None:
-        st.markdown("#### Dataset Preview")
-
-        dataset = st.session_state.llmData['dataset']
-
-        # General information
-        column1, column2, column3 = st.columns(3)
-
-        with column1:
-            st.metric("Rows", len(dataset))
-        with column2:
-            st.metric("Columns", len(dataset.columns))
-        with column3:
-            st.metric("Memory", f"{dataset.memory_usage(deep=True).sum() / 1048576:.2f} MB")
-
-        # Preview the data
-        st.markdown("**First 10 rows:**")
-        st.dataframe(dataset.head(10), use_container_width=True)
-
-        # Text column selection
-        textColumns = [col for col in dataset.columns if dataset[col].dtype == 'object']
-
-        # Add placeholder option
-        placeholder = "-- Select a column --"
-        options_with_placeholder = [placeholder] + textColumns
-
-        # Get current selection or default to placeholder
-        current_selection = st.session_state.llmData.get('textColumn')
-        if current_selection and current_selection in textColumns:
-            default_index = options_with_placeholder.index(current_selection)
-        else:
-            default_index = 0
-
-        selectedTextColumn = st.selectbox(
-            "Select the column containing text for classification (must be a text/string column):",
-            options=options_with_placeholder,
-            index=default_index,
-            help="This column will be used as input for the LLM model",
-            key="llm_text_column"
-        )
-
-        # Only update if a valid column is selected (not placeholder)
-        if selectedTextColumn != placeholder:
-            st.session_state.llmData['textColumn'] = selectedTextColumn
-        else:
-            st.session_state.llmData['textColumn'] = None
-
-    # Step 1 completion indicator
-    if step1_complete:
-        st.success("✅ **Step 1 completed!** Dataset loaded and text column selected.")
+    st.markdown("### 📁 Global Dataset Preview")
+    
+    if st.session_state.globalData['datasetLoaded'] and st.session_state.globalData['dataset'] is not None:
+        dataset = st.session_state.globalData['dataset']
+        text_column = st.session_state.globalData['textColumn']
+        
+        # Dataset statistics
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric("📊 Rows", f"{len(dataset):,}")
+        with col2:
+            st.metric("📋 Columns", len(dataset.columns))
+        with col3:
+            st.metric("📝 Text Column", text_column if text_column else "Not selected")
+        with col4:
+            st.metric("📄 Source", st.session_state.globalData['originalFileName'])
+        
+        # Preview
+        st.markdown("**Dataset Preview (first 5 rows):**")
+        st.dataframe(dataset.head(5), use_container_width=True)
+        
+        # Check if configuration is complete
+        if text_column is None:
+            st.warning("⚠️ Please select a text column in the Home page to enable classification.")
+    else:
+        st.warning("⚠️ **No dataset loaded.** Please upload a dataset in the Home page first.")
+        st.info("👈 Go to **Home** to upload and configure your dataset.")
 
 st.markdown("")
 
 # =============================================================================
-# Step 2: Model and API Key Configuration
+# Step 1: Model and API Key Configuration
 # =============================================================================
 
-# Check if step 2 is complete
-step2_complete = (
+# Check if step 1 is complete
+step1_complete = (
     st.session_state.llmData['selectedModel'] is not None and
     st.session_state.llmData['apiKey'] != '' and
     st.session_state.llmData['apiKeyValidated']
 )
 
 with st.container(border=True):
-    st.markdown("### 🤖 Step 2: Model and API Key Configuration")
+    st.markdown("### 🤖 Step 1: Model and API Key Configuration")
     st.markdown("Select an LLM provider and model, then configure your API key.")
 
     # Get available models
@@ -291,21 +278,21 @@ with st.container(border=True):
         else:
             st.warning("⚠️ Please enter a test message.")
 
-    # Step 2 completion indicator
-    if step2_complete:
-        st.success("✅ **Step 2 completed!** Model configured and API key validated.")
+    # Step 1 completion indicator
+    if step1_complete:
+        st.success("✅ **Step 1 completed!** Model configured and API key validated.")
 
 st.markdown("")
 
 # =============================================================================
-# Step 3: Prompt Configuration (DSPy Style)
+# Step 2: Prompt Configuration (DSPy Style)
 # =============================================================================
 
-# Check if step 3 is complete
-step3_complete = st.session_state.llmData['promptInstructions'] != ''
+# Check if step 2 is complete
+step2_complete = st.session_state.llmData['promptInstructions'] != ''
 
 with st.container(border=True):
-    st.markdown("### 📝 Step 3: Prompt Configuration")
+    st.markdown("### 📝 Step 2: Prompt Configuration")
     st.markdown("Configure the classification prompt following DSPy patterns.")
 
     st.markdown("#### Classification Instructions")
@@ -372,7 +359,7 @@ class TextClassifier(dspy.Signature):
 """, language="python")
 
     # Test prompt with single text
-    if step2_complete and prompt_instructions.strip():
+    if step1_complete and prompt_instructions.strip():
         st.markdown("---")
         st.markdown("#### 🧪 Test Prompt")
         st.markdown("Test your prompt configuration with a sample text.")
@@ -410,90 +397,37 @@ class TextClassifier(dspy.Signature):
             else:
                 st.warning("⚠️ Please enter sample text to test.")
 
-    # Step 3 completion indicator
-    if step3_complete:
-        st.success("✅ **Step 3 completed!** Prompt configured.")
+    # Step 2 completion indicator
+    if step2_complete:
+        st.success("✅ **Step 2 completed!** Prompt configured.")
 
 st.markdown("")
 
 # =============================================================================
-# Step 4: Output Configuration
+# Step 3: LLM Classification
 # =============================================================================
 
-# Check if step 4 is complete
-step4_complete = (
-    st.session_state.llmData['outputDirectory'] != '' and
-    st.session_state.llmData['outputFileName'] != ''
-)
-
-with st.container(border=True):
-    st.markdown("### 📂 Step 4: Output Configuration")
-    st.markdown("Configure where and how to save the classification results.")
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        output_format = st.selectbox(
-            "File format:",
-            options=['csv', 'xlsx', 'json'],
-            index=['csv', 'xlsx', 'json'].index(st.session_state.llmData.get('outputFormat', 'csv')),
-            key="llm_output_format"
-        )
-        st.session_state.llmData['outputFormat'] = output_format
-
-    with col2:
-        output_filename = st.text_input(
-            "File name:",
-            value=st.session_state.llmData.get('outputFileName', f"llm_classification_{datetime.now().strftime('%Y%m%d_%H%M%S')}"),
-            help="Do not include file extension",
-            key="llm_output_filename"
-        )
-        st.session_state.llmData['outputFileName'] = output_filename
-
-    output_directory = st.text_input(
-        "Output directory:",
-        value=st.session_state.llmData.get('outputDirectory', os.path.expanduser("~/Downloads")),
-        help="Full path to the directory where the file will be saved",
-        key="llm_output_directory"
-    )
-    st.session_state.llmData['outputDirectory'] = output_directory
-
-    # Show preview of full path
-    if output_filename and output_directory:
-        full_path_preview = os.path.join(output_directory, f"{output_filename}.{output_format}")
-        st.info(f"📁 File will be saved as: `{full_path_preview}`")
-
-    # Step 4 completion indicator
-    if step4_complete:
-        st.success("✅ **Step 4 completed!** Output configuration ready.")
-
-st.markdown("")
-
-# =============================================================================
-# Step 5: LLM Classification
-# =============================================================================
-
-# Check if step 5 is complete
-step5_complete = st.session_state.llmData['classificationResults'] is not None
+# Check if step 3 is complete
+step3_complete = st.session_state.llmData['classificationResults'] is not None
 
 # Check if ready for classification
 can_classify = (
-    st.session_state.llmData['dataset'] is not None and
-    st.session_state.llmData['textColumn'] is not None and
+    st.session_state.globalData['dataset'] is not None and
+    st.session_state.globalData['textColumn'] is not None and
     st.session_state.llmData['selectedModel'] is not None and
     st.session_state.llmData['apiKeyValidated'] and
     st.session_state.llmData['promptInstructions'] != ''
 )
 
 with st.container(border=True):
-    st.markdown("### 🚀 Step 5: LLM Classification")
+    st.markdown("### 🚀 Step 3: LLM Classification")
 
     if can_classify:
         st.markdown("✅ Everything ready for classification!")
 
         # Show configuration summary
-        dataset = st.session_state.llmData['dataset']
-        text_column = st.session_state.llmData['textColumn']
+        dataset = st.session_state.globalData['dataset']
+        text_column = st.session_state.globalData['textColumn']
         selected_model = st.session_state.llmData['selectedModel']
         model_info = get_available_models()[selected_model]
 
@@ -559,29 +493,22 @@ with st.container(border=True):
                         classification_results
                     )
 
-                    # Save results
+                    # Update global dataset with classification results
+                    st.session_state.globalData['dataset'] = results_df
                     st.session_state.llmData['classificationResults'] = results_df
 
                     progress_bar.progress(0.98)
                     status_text.text("Saving results...")
 
-                    # Auto-save file
-                    output_format = st.session_state.llmData['outputFormat']
-                    output_filename = st.session_state.llmData['outputFileName']
-                    output_directory = st.session_state.llmData['outputDirectory']
+                    # Auto-save global dataset
+                    success, result = save_global_dataset()
 
-                    filename = f"{output_filename}.{output_format}"
-                    full_path = os.path.join(output_directory, filename)
-
-                    save_result = save_classification_results(results_df, full_path, output_format)
-
-                    if save_result['success']:
-                        st.session_state.llmData['fileSaved'] = True
+                    if success:
                         progress_bar.progress(1.0)
                         status_text.text("✅ Classification completed!")
-                        st.success(f"✅ Classification completed! File saved to: `{full_path}`")
+                        st.success(f"✅ Classification completed! File saved to: `{result}`")
                     else:
-                        st.warning(f"⚠️ Classification completed but failed to save file: {save_result['error']}")
+                        st.warning(f"⚠️ Classification completed but failed to save file: {result}")
 
                     st.rerun()
 
@@ -592,10 +519,10 @@ with st.container(border=True):
 
     else:
         missing = []
-        if st.session_state.llmData['dataset'] is None:
-            missing.append("📁 Dataset")
-        if st.session_state.llmData['textColumn'] is None:
-            missing.append("📝 Text column")
+        if st.session_state.globalData['dataset'] is None:
+            missing.append("📁 Dataset (upload in Home)")
+        if st.session_state.globalData['textColumn'] is None:
+            missing.append("📝 Text column (select in Home)")
         if st.session_state.llmData['selectedModel'] is None:
             missing.append("🤖 Selected model")
         if not st.session_state.llmData['apiKeyValidated']:
@@ -608,9 +535,9 @@ with st.container(border=True):
         for item in missing:
             st.markdown(f"- {item}")
 
-    # Step 5 completion indicator
-    if step5_complete:
-        st.success("✅ **Step 5 completed!** Classification performed successfully.")
+    # Step 3 completion indicator
+    if step3_complete:
+        st.success("✅ **Step 3 completed!** Classification performed successfully.")
 
         # Results Preview
         st.markdown("---")
@@ -637,13 +564,9 @@ with st.container(border=True):
         st.markdown("**Classified Dataset Preview:**")
         st.dataframe(results_df.head(20), use_container_width=True)
 
-        # Show file location if saved
-        if st.session_state.llmData.get('fileSaved', False):
-            output_format = st.session_state.llmData['outputFormat']
-            output_filename = st.session_state.llmData['outputFileName']
-            output_directory = st.session_state.llmData['outputDirectory']
-            full_path = os.path.join(output_directory, f"{output_filename}.{output_format}")
-
-            st.success(f"💾 File saved at: `{full_path}`")
-        else:
-            st.info("⏳ File will be saved automatically after classification.")
+        # Show file location
+        output_format = st.session_state.globalData['outputFormat']
+        output_filename = st.session_state.globalData['outputFileName']
+        output_directory = st.session_state.globalData['outputDirectory']
+        full_path = os.path.join(output_directory, f"{output_filename}.{output_format}")
+        st.success(f"💾 File saved at: `{full_path}`")
