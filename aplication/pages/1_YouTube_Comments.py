@@ -35,7 +35,7 @@ if 'youtubeTask' not in st.session_state:
         'apiKey': '',                       # YouTube API key
         'outputDirectory': '',              # Output directory
         'outputFileName': '',               # Output file name
-        'outputFormat': 'csv',              # File format (csv, xlsx, json)
+        'outputFormat': 'csv',              # File format (csv, xlsx, json, parquet)
         'maxComments': 100,                 # Maximum number of comments to collect
         'isExecuting': False,               # Execution status
         'collectionResults': None,          # Collection results
@@ -272,10 +272,6 @@ with st.container(border=True):
     else:
         st.warning("⚠️ Enter the YouTube video URL to continue.")
 
-    # Step 1 completion indicator
-    if step1_complete:
-        st.success("✅ **Step 1 completed!** API configured and video selected.")
-
 st.markdown("")
 
 # =============================================================================
@@ -385,10 +381,6 @@ with st.container(border=True):
     else:
         st.info("💡 Complete Step 1 to configure collection settings.")
 
-    # Step 2 completion indicator
-    if step2_complete:
-        st.success("✅ **Step 2 completed!** Collection settings configured.")
-
 st.markdown("")
 
 # =============================================================================
@@ -455,10 +447,6 @@ with st.container(border=True):
     # Check if configuration is complete
     if not outputFileName.strip():
         st.warning("⚠️ Please enter a file name to continue.")
-
-    # Step 3 completion indicator
-    if step3_complete:
-        st.success("✅ **Step 3 completed!** Output configuration defined.")
 
 st.markdown("")
 
@@ -712,7 +700,3 @@ with st.container(border=True):
                     st.error(f"❌ Error loading sample: {str(e)}")
         else:
             st.error(f"❌ Collection failed: {results['error']}")
-
-    # Step 4 completion indicator
-    if step4_complete:
-        st.success("✅ **Step 4 completed!** Comments collected and saved successfully.")

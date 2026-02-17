@@ -188,7 +188,7 @@ def classify_texts(texts, model, batch_size=32, progress_callback=None):
 # Results Processing
 # =============================================================================
 
-def create_results_dataframe(original_df, text_column, classification_results, labels, threshold=0.5):
+def create_results_dataframe(original_df, text_column, classification_results):
     """
     Creates DataFrame with classification results.
     
@@ -196,8 +196,6 @@ def create_results_dataframe(original_df, text_column, classification_results, l
         original_df: Original DataFrame
         text_column: Name of the text column
         classification_results: List of classification result dicts
-        labels: List of label names
-        threshold: Threshold to consider a label as positive
         
     Returns:
         pd.DataFrame: DataFrame with results
@@ -206,33 +204,13 @@ def create_results_dataframe(original_df, text_column, classification_results, l
 
     results_df = original_df.copy()
 
-    # Add score columns for each label
-    for label in labels:
-        results_df[f'score_{label}'] = [result[label] for result in classification_results]
-
-    # Add binary columns for each label (above threshold)
-    for label in labels:
-        results_df[f'is_{label}'] = [result[label] >= threshold for result in classification_results]
-
-    # Add dominant label (highest score)
-    def get_dominant_label(result):
-        max_label = max(result.items(), key=lambda x: x[1])
-        return max_label[0]
-
-    results_df['dominant_label'] = [get_dominant_label(result) for result in classification_results]
-
-    # Add maximum score
-    results_df['max_score'] = [max(result.values()) for result in classification_results]
-
-    # Add toxic flag (if any toxic-related label is above threshold)
-    toxic_labels = ['toxic', 'severe_toxic']
-    def is_toxic(result):
-        for label in toxic_labels:
-            if label in result and result[label] >= threshold:
-                return True
-        return False
-
-    results_df['is_toxic_any'] = [is_toxic(result) for result in classification_results]
+    # Get labels from the first result (all results have the same keys)
+    if classification_results and len(classification_results) > 0:
+        labels = list(classification_results[0].keys())
+        
+        # Add probability columns for each label with detoxify prefix
+        for label in labels:
+            results_df[f'detoxify_prob_{label}'] = [result[label] for result in classification_results]
 
     return results_df
 

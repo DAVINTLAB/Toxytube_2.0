@@ -7,7 +7,7 @@ import pandas as pd
 import os
 from datetime import datetime
 
-from components.navigation import render_navigation
+from components.navigation import render_navigation, is_configuration_complete, get_configuration_status
 from components.llm_classifier import (
     get_available_models,
     get_providers,
@@ -46,7 +46,7 @@ if 'globalData' not in st.session_state:
         'textColumn': None,
         'outputDirectory': os.path.expanduser('~/Downloads'),
         'outputFileName': '',
-        'outputFormat': 'csv',
+        'outputFormat': None,
         'datasetLoaded': False,
         'originalFileName': ''
     }
@@ -113,7 +113,8 @@ st.markdown("---")
 with st.container(border=True):
     st.markdown("### 📁 Dataset Preview")
 
-    if st.session_state.globalData['datasetLoaded'] and st.session_state.globalData['dataset'] is not None:
+    config_status = get_configuration_status()
+    if config_status['complete']:
         dataset = st.session_state.globalData['dataset']
         text_column = st.session_state.globalData['textColumn']
 
@@ -227,15 +228,7 @@ with st.container(border=True):
             st.warning("⚠️ No models available for this provider.")
             selected_model = None
 
-    # Show model info
-    if selected_model and selected_model in available_models:
-        model_info = available_models[selected_model]
-        st.info(f"💡 **{model_info['name']}**: {model_info['description']} (Context: {model_info['context_window']:,} tokens)")
-
-    st.markdown("---")
-
     # API Key input
-    st.markdown("#### 🔑 API Key")
 
     api_key_input = st.text_input(
         f"Enter your {selected_provider} API Key:",
@@ -251,62 +244,53 @@ with st.container(border=True):
         st.session_state.llmData['apiKeyValidated'] = False
         st.session_state.llmData['_last_api_key'] = api_key_input
 
-    col1, col2 = st.columns(2)
-
-    with col1:
-        if st.button("🔍 Validate API Key", use_container_width=True, key="validate_api_key"):
-            if api_key_input:
-                with st.spinner("Validating API key..."):
-                    is_valid, message = validate_api_key(selected_model, api_key_input)
-                    if is_valid:
-                        st.session_state.llmData['apiKeyValidated'] = True
-                        st.success(f"✅ {message}")
-                    else:
-                        st.session_state.llmData['apiKeyValidated'] = False
-                        st.error(f"❌ {message}")
-            else:
-                st.warning("⚠️ Please enter an API key.")
-
-    with col2:
-        if st.session_state.llmData['apiKeyValidated']:
-            st.success("✅ API Key Validated")
-        else:
-            st.info("� API Key not validated yet")
-
-    st.markdown("---")
-
-    # Test model section
-    st.markdown("#### 🧪 Test Model Connection")
-    st.markdown("Send a test message to verify the model is working correctly.")
-
-    test_message = st.text_area(
-        "Test message:",
-        placeholder="Enter a message to test the model...\nExample: Hello, can you classify this text as positive or negative?",
-        height=100,
-        key="llm_test_message"
-    )
-
-    if st.button("🚀 Send Test Message", use_container_width=True, key="test_llm_connection"):
-        if test_message.strip() and api_key_input:
-            with st.spinner("Sending message to model..."):
-                response, error = test_model_connection(selected_model, api_key_input, test_message)
-
-                if error:
-                    st.error(f"❌ {error}")
+    if st.button("🔍 Validate API Key", use_container_width=True, key="validate_api_key"):
+        if api_key_input:
+            with st.spinner("Validating API key..."):
+                is_valid, message = validate_api_key(selected_model, api_key_input)
+                if is_valid:
+                    st.session_state.llmData['apiKeyValidated'] = True
+                    st.rerun()
                 else:
-                    st.success("✅ Model responded successfully!")
-                    st.markdown("**Response:**")
-                    st.markdown(f"> {response}")
-        elif not api_key_input:
-            st.warning("⚠️ Please enter an API key first.")
+                    st.session_state.llmData['apiKeyValidated'] = False
+                    st.error(message)
         else:
-            st.warning("⚠️ Please enter a test message.")
+            st.warning("⚠️ Please enter an API key.")
+
+    if st.session_state.llmData['apiKeyValidated']:
+        st.success("✅ API Key Validated")
+
+
+        # Test model section
+        with st.expander("🧪 Test Model Connection", expanded=False):
+            st.markdown("Send a test message to verify the model is working correctly.")
+
+            test_message = st.text_area(
+                "Test message:",
+                placeholder="Enter a message to test the model...\nExample: Hello, can you classify this text as positive or negative?",
+                height=100,
+                key="llm_test_message"
+            )
+
+            if st.button("🚀 Send Test Message", use_container_width=True, key="test_llm_connection"):
+                if test_message.strip() and api_key_input:
+                    with st.spinner("Sending message to model..."):
+                        response, error = test_model_connection(selected_model, api_key_input, test_message)
+
+                        if error:
+                            st.error(f"❌ {error}")
+                        else:
+                            st.markdown("**Response:**")
+                            st.markdown(f"> {response}")
+                elif not api_key_input:
+                    st.warning("⚠️ Please enter an API key first.")
+                else:
+                    st.warning("⚠️ Please enter a test message.")
 
     # Step 1 completion indicator
     if step1_complete:
         st.success("✅ **Step 1 completed!** Model configured and API key validated.")
 
-st.markdown("")
 
 # =============================================================================
 # Step 2: Prompt Configuration (DSPy Style)
@@ -317,109 +301,151 @@ step2_complete = st.session_state.llmData['promptInstructions'] != ''
 
 with st.container(border=True):
     st.markdown("### 📝 Step 2: Prompt Configuration")
-    st.markdown("Configure the classification prompt following DSPy patterns.")
 
     st.markdown("#### Classification Instructions")
     st.markdown("Define the instructions for the LLM classifier. Be specific about what the model should classify and how.")
 
-    prompt_instructions = st.text_area(
-        "Instructions (required):",
-        value=st.session_state.llmData.get('promptInstructions', ''),
-        placeholder="""Example instructions:
-
-You are a sentiment classifier. Analyze the given text and classify it based on the emotional tone.
+    default_instructions = """You are a sentiment classifier. Analyze the given text and classify it based on the emotional tone.
 
 Consider the following:
 - Positive: Texts expressing happiness, satisfaction, excitement, or praise
 - Negative: Texts expressing anger, disappointment, sadness, or criticism
 - Neutral: Texts that are factual, objective, or without clear emotional tone
 
-Classify each text into one of these categories based on the overall sentiment.""",
-        height=200,
+Classify each text into one of these categories based on the overall sentiment."""
+
+    prompt_instructions = st.text_area(
+        "Instructions (required):",
+        value=st.session_state.llmData.get('promptInstructions', '') or default_instructions,
+        height=300,
         key="llm_prompt_instructions"
     )
     st.session_state.llmData['promptInstructions'] = prompt_instructions
 
-    st.markdown("---")
 
     st.markdown("#### Classification Labels (Optional)")
     st.markdown("If you want to restrict the output to specific labels, list them here. Leave empty for free-form classification.")
 
+    default_labels = "positive, negative, neutral"
+
     prompt_labels = st.text_input(
         "Labels (comma-separated, optional):",
-        value=st.session_state.llmData.get('promptLabels', ''),
-        placeholder="Example: positive, negative, neutral",
+        value=st.session_state.llmData.get('promptLabels', '') or default_labels,
         help="The model will be instructed to choose one of these labels",
         key="llm_prompt_labels"
     )
     st.session_state.llmData['promptLabels'] = prompt_labels
 
-    # Preview the DSPy signature
-    st.markdown("---")
-    st.markdown("#### 📋 DSPy Signature Preview")
-
-    if prompt_labels.strip():
-        st.code("""
-class TextClassifierWithLabels(dspy.Signature):
-    \"\"\"Classify text according to the provided instructions. You must choose one of the provided labels.\"\"\"
-    
-    classification_instructions: str = dspy.InputField(desc="Classification instructions")
-    labels: str = dspy.InputField(desc="Available classification labels (comma-separated)")
-    text: str = dspy.InputField(desc="Text to be classified")
-    classification: str = dspy.OutputField(desc="The classification label (must be one of the provided labels)")
-    confidence: str = dspy.OutputField(desc="Confidence level: high, medium, or low")
-    reasoning: str = dspy.OutputField(desc="Brief reasoning for the classification")
-""", language="python")
-    else:
-        st.code("""
-class TextClassifier(dspy.Signature):
-    \"\"\"Classify text according to the provided instructions.\"\"\"
-    
-    classification_instructions: str = dspy.InputField(desc="Classification instructions and label definitions")
-    text: str = dspy.InputField(desc="Text to be classified")
-    classification: str = dspy.OutputField(desc="The classification label for the text")
-    confidence: str = dspy.OutputField(desc="Confidence level: high, medium, or low")
-    reasoning: str = dspy.OutputField(desc="Brief reasoning for the classification")
-""", language="python")
-
     # Test prompt with single text
     if step1_complete and prompt_instructions.strip():
         st.markdown("---")
-        st.markdown("#### 🧪 Test Prompt")
-        st.markdown("Test your prompt configuration with a sample text.")
 
-        test_text_prompt = st.text_area(
-            "Sample text to classify:",
-            placeholder="Enter sample text to test the classification prompt...",
-            height=80,
-            key="llm_test_prompt_text"
-        )
+        with st.expander("🧪 Test Prompt", expanded=False):
+            st.markdown("Test your prompt configuration with a sample text.")
 
-        if st.button("🔍 Test Classification", use_container_width=True, key="test_classification"):
-            if test_text_prompt.strip():
-                with st.spinner("Classifying..."):
-                    result, error = classify_single_text_llm(
-                        test_text_prompt,
-                        prompt_instructions,
-                        prompt_labels if prompt_labels.strip() else None,
-                        st.session_state.llmData['selectedModel'],
-                        st.session_state.llmData['apiKey']
+            test_text_prompt = st.text_area(
+                "Sample text to classify:",
+                placeholder="Enter sample text to test the classification prompt...",
+                height=80,
+                key="llm_test_prompt_text"
+            )
+
+            if st.button("🔍 Test Classification", use_container_width=True, key="test_classification"):
+                if test_text_prompt.strip():
+                    with st.spinner("Classifying..."):
+                        result, error = classify_single_text_llm(
+                            test_text_prompt,
+                            prompt_instructions,
+                            prompt_labels if prompt_labels.strip() else None,
+                            st.session_state.llmData['selectedModel'],
+                            st.session_state.llmData['apiKey']
+                        )
+
+                        if error:
+                            st.error(f"❌ {error}")
+                        else:
+                            col1, col2, col3 = st.columns(3)
+                            with col1:
+                                st.metric("Classification", result['classification'])
+                            with col2:
+                                st.metric("Confidence", result['confidence'])
+                            with col3:
+                                st.metric("Reasoning", "See below")
+                            st.markdown(f"**Reasoning:** {result['reasoning']}")
+                else:
+                    st.warning("⚠️ Please enter sample text to test.")
+
+        with st.expander("💰 Estimate Classification Cost", expanded=False):
+            st.markdown("Estimate the total cost of classifying all texts in your dataset.")
+
+            # Check if dataset is available
+            if st.session_state.globalData['dataset'] is not None and st.session_state.globalData['textColumn'] is not None:
+                dataset = st.session_state.globalData['dataset']
+                text_column = st.session_state.globalData['textColumn']
+
+                # Calculate estimated tokens
+                # Rough estimation: 1 token ≈ 4 characters for English text
+                all_texts = dataset[text_column].astype(str).tolist()
+                total_text_chars = sum(len(text) for text in all_texts)
+                instruction_chars = len(prompt_instructions) * len(all_texts)  # Instructions sent with each text
+                labels_chars = len(prompt_labels) * len(all_texts) if prompt_labels.strip() else 0
+
+                total_chars = total_text_chars + instruction_chars + labels_chars
+                estimated_input_tokens = total_chars / 4  # Approximate tokens
+
+                # Estimate output tokens (roughly 50 tokens per response for classification + reasoning)
+                estimated_output_tokens = len(all_texts) * 50
+
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Total Texts", f"{len(all_texts):,}")
+                with col2:
+                    st.metric("Est. Input Tokens", f"{int(estimated_input_tokens):,}")
+                with col3:
+                    st.metric("Est. Output Tokens", f"{int(estimated_output_tokens):,}")
+
+                st.markdown("---")
+
+                col1, col2 = st.columns(2)
+                with col1:
+                    input_token_cost = st.number_input(
+                        "Cost per 1M input tokens ($):",
+                        min_value=0.0,
+                        value=0.15,
+                        step=0.01,
+                        format="%.4f",
+                        help="Check your provider's pricing page for the cost per million input tokens",
+                        key="input_token_cost"
+                    )
+                with col2:
+                    output_token_cost = st.number_input(
+                        "Cost per 1M output tokens ($):",
+                        min_value=0.0,
+                        value=0.60,
+                        step=0.01,
+                        format="%.4f",
+                        help="Check your provider's pricing page for the cost per million output tokens",
+                        key="output_token_cost"
                     )
 
-                    if error:
-                        st.error(f"❌ {error}")
-                    else:
-                        st.success("✅ Classification successful!")
-                        col1, col2, col3 = st.columns(3)
-                        with col1:
-                            st.metric("Classification", result['classification'])
-                        with col2:
-                            st.metric("Confidence", result['confidence'])
-                        with col3:
-                            st.metric("Reasoning", "See below")
-                        st.markdown(f"**Reasoning:** {result['reasoning']}")
+                # Calculate estimated cost
+                input_cost = (estimated_input_tokens / 1_000_000) * input_token_cost
+                output_cost = (estimated_output_tokens / 1_000_000) * output_token_cost
+                total_cost = input_cost + output_cost
+
+                st.markdown("---")
+
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Input Cost", f"${input_cost:.4f}")
+                with col2:
+                    st.metric("Output Cost", f"${output_cost:.4f}")
+                with col3:
+                    st.metric("Total Estimated Cost", f"${total_cost:.4f}")
+
+                st.info("💡 This is an approximation. Actual costs may vary based on tokenization and response length.")
             else:
-                st.warning("⚠️ Please enter sample text to test.")
+                st.warning("⚠️ Please load a dataset first to estimate costs.")
 
     # Step 2 completion indicator
     if step2_complete:
@@ -447,7 +473,7 @@ with st.container(border=True):
     st.markdown("### 🚀 Step 3: LLM Classification")
 
     if can_classify:
-        st.markdown("✅ Everything ready for classification!")
+        st.markdown("Everything ready for classification!")
 
         # Show configuration summary
         dataset = st.session_state.globalData['dataset']
@@ -569,15 +595,56 @@ with st.container(border=True):
 
         results_df = st.session_state.llmData['classificationResults']
 
-        # Show classification distribution
-        st.markdown("**Classification Distribution:**")
-        label_dist = results_df['llm_classification'].value_counts()
-        st.bar_chart(label_dist)
+        # Show classification and confidence distribution side by side
+        import plotly.express as px
 
-        # Show confidence distribution
-        st.markdown("**Confidence Distribution:**")
-        confidence_dist = results_df['llm_confidence'].value_counts()
-        st.bar_chart(confidence_dist)
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.markdown("**Classification Distribution:**")
+            label_dist = results_df['llm_classification'].value_counts().reset_index()
+            label_dist.columns = ['Classification', 'Count']
+
+            fig_class = px.pie(
+                label_dist,
+                values='Count',
+                names='Classification',
+                hole=0.4
+            )
+            fig_class.update_traces(
+                textposition='inside',
+                textinfo='percent+label',
+                hovertemplate='<b>%{label}</b><br>Count: %{value}<br>Percentage: %{percent}<extra></extra>'
+            )
+            fig_class.update_layout(
+                showlegend=False,
+                margin=dict(t=20, b=20, l=20, r=20),
+                height=350
+            )
+            st.plotly_chart(fig_class, use_container_width=True)
+
+        with col2:
+            st.markdown("**Confidence Distribution:**")
+            confidence_dist = results_df['llm_confidence'].value_counts().reset_index()
+            confidence_dist.columns = ['Confidence', 'Count']
+
+            fig_conf = px.pie(
+                confidence_dist,
+                values='Count',
+                names='Confidence',
+                hole=0.4
+            )
+            fig_conf.update_traces(
+                textposition='inside',
+                textinfo='percent+label',
+                hovertemplate='<b>%{label}</b><br>Count: %{value}<br>Percentage: %{percent}<extra></extra>'
+            )
+            fig_conf.update_layout(
+                showlegend=False,
+                margin=dict(t=20, b=20, l=20, r=20),
+                height=350
+            )
+            st.plotly_chart(fig_conf, use_container_width=True)
 
         # Show error count
         error_count = results_df['llm_error'].notna().sum()
@@ -593,4 +660,4 @@ with st.container(border=True):
         output_filename = st.session_state.globalData['outputFileName']
         output_directory = st.session_state.globalData['outputDirectory']
         full_path = os.path.join(output_directory, f"{output_filename}.{output_format}")
-        st.success(f"✅ File saved at: `{full_path}`")
+        st.info(f"💡 File saved at: `{full_path}`")

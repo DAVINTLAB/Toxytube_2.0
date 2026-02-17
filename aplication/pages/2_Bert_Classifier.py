@@ -9,7 +9,7 @@ import pathlib
 from datetime import datetime
 import sys
 
-from components.navigation import render_navigation
+from components.navigation import render_navigation, is_configuration_complete, get_configuration_status
 from components.text_classifier import (
     get_available_device,
     is_bert_classifier,
@@ -45,7 +45,7 @@ if 'globalData' not in st.session_state:
         'textColumn': None,
         'outputDirectory': os.path.expanduser('~/Downloads'),
         'outputFileName': '',
-        'outputFormat': 'csv',
+        'outputFormat': None,
         'datasetLoaded': False,
         'originalFileName': ''
     }
@@ -112,7 +112,8 @@ st.markdown("---")
 with st.container(border=True):
     st.markdown("### 📁 Dataset Preview")
 
-    if st.session_state.globalData['datasetLoaded'] and st.session_state.globalData['dataset'] is not None:
+    config_status = get_configuration_status()
+    if config_status['complete']:
         dataset = st.session_state.globalData['dataset']
         text_column = st.session_state.globalData['textColumn']
 

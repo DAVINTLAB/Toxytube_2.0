@@ -22,28 +22,24 @@ LLM_MODELS = {
     'openai/gpt-4o': {
         'name': 'GPT-4o',
         'provider': 'OpenAI',
-        'description': 'Most capable GPT-4 model with vision capabilities',
         'api_key_env': 'OPENAI_API_KEY',
         'context_window': 128000
     },
     'openai/gpt-4o-mini': {
         'name': 'GPT-4o Mini',
         'provider': 'OpenAI',
-        'description': 'Smaller, faster, and cheaper version of GPT-4o',
         'api_key_env': 'OPENAI_API_KEY',
         'context_window': 128000
     },
     'openai/gpt-4-turbo': {
         'name': 'GPT-4 Turbo',
         'provider': 'OpenAI',
-        'description': 'GPT-4 Turbo with improved performance',
         'api_key_env': 'OPENAI_API_KEY',
         'context_window': 128000
     },
     'openai/gpt-3.5-turbo': {
         'name': 'GPT-3.5 Turbo',
         'provider': 'OpenAI',
-        'description': 'Fast and cost-effective model',
         'api_key_env': 'OPENAI_API_KEY',
         'context_window': 16385
     },
@@ -51,21 +47,18 @@ LLM_MODELS = {
     'anthropic/claude-3-5-sonnet-20241022': {
         'name': 'Claude 3.5 Sonnet',
         'provider': 'Anthropic',
-        'description': 'Most intelligent Claude model',
         'api_key_env': 'ANTHROPIC_API_KEY',
         'context_window': 200000
     },
     'anthropic/claude-3-5-haiku-20241022': {
         'name': 'Claude 3.5 Haiku',
         'provider': 'Anthropic',
-        'description': 'Fast and compact Claude model',
         'api_key_env': 'ANTHROPIC_API_KEY',
         'context_window': 200000
     },
     'anthropic/claude-3-opus-20240229': {
         'name': 'Claude 3 Opus',
         'provider': 'Anthropic',
-        'description': 'Most powerful Claude 3 model for complex tasks',
         'api_key_env': 'ANTHROPIC_API_KEY',
         'context_window': 200000
     },
@@ -73,21 +66,18 @@ LLM_MODELS = {
     'gemini/gemini-1.5-pro': {
         'name': 'Gemini 1.5 Pro',
         'provider': 'Google',
-        'description': 'Advanced Google AI model with long context',
         'api_key_env': 'GEMINI_API_KEY',
         'context_window': 2000000
     },
     'gemini/gemini-1.5-flash': {
         'name': 'Gemini 1.5 Flash',
         'provider': 'Google',
-        'description': 'Fast and efficient Google AI model',
         'api_key_env': 'GEMINI_API_KEY',
         'context_window': 1000000
     },
     'gemini/gemini-2.0-flash': {
         'name': 'Gemini 2.0 Flash',
         'provider': 'Google',
-        'description': 'Latest fast Google AI model',
         'api_key_env': 'GEMINI_API_KEY',
         'context_window': 1000000
     },
@@ -95,21 +85,18 @@ LLM_MODELS = {
     'groq/llama-3.3-70b-versatile': {
         'name': 'Llama 3.3 70B (Groq)',
         'provider': 'Groq',
-        'description': 'Meta Llama 3.3 70B on Groq fast inference',
         'api_key_env': 'GROQ_API_KEY',
         'context_window': 128000
     },
     'groq/llama-3.1-8b-instant': {
         'name': 'Llama 3.1 8B (Groq)',
         'provider': 'Groq',
-        'description': 'Fast and lightweight Llama model on Groq',
         'api_key_env': 'GROQ_API_KEY',
         'context_window': 128000
     },
     'groq/mixtral-8x7b-32768': {
         'name': 'Mixtral 8x7B (Groq)',
         'provider': 'Groq',
-        'description': 'Mixtral MoE model on Groq',
         'api_key_env': 'GROQ_API_KEY',
         'context_window': 32768
     },
@@ -117,14 +104,12 @@ LLM_MODELS = {
     'mistral/mistral-large-latest': {
         'name': 'Mistral Large',
         'provider': 'Mistral AI',
-        'description': 'Most capable Mistral model',
         'api_key_env': 'MISTRAL_API_KEY',
         'context_window': 128000
     },
     'mistral/mistral-small-latest': {
         'name': 'Mistral Small',
         'provider': 'Mistral AI',
-        'description': 'Efficient Mistral model for simple tasks',
         'api_key_env': 'MISTRAL_API_KEY',
         'context_window': 32000
     },
@@ -132,14 +117,12 @@ LLM_MODELS = {
     'deepseek/deepseek-chat': {
         'name': 'DeepSeek Chat',
         'provider': 'DeepSeek',
-        'description': 'DeepSeek conversational model',
         'api_key_env': 'DEEPSEEK_API_KEY',
         'context_window': 64000
     },
     'deepseek/deepseek-reasoner': {
         'name': 'DeepSeek Reasoner',
         'provider': 'DeepSeek',
-        'description': 'DeepSeek model optimized for reasoning',
         'api_key_env': 'DEEPSEEK_API_KEY',
         'context_window': 64000
     },
@@ -270,7 +253,7 @@ def configure_dspy(model_id: str, api_key: str) -> tuple[Optional[object], Optio
 
         # Create LM instance
         lm = dspy.LM(model=model_id, api_key=api_key)
-        
+
         return lm, None
 
     except Exception as e:

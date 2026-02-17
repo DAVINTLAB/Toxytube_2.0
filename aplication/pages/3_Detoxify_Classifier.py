@@ -7,7 +7,7 @@ import pandas as pd
 import os
 from datetime import datetime
 
-from components.navigation import render_navigation
+from components.navigation import render_navigation, is_configuration_complete, get_configuration_status
 from components.detoxify_classifier import (
     get_available_models,
     get_available_device,
@@ -30,7 +30,6 @@ if 'detoxifyData' not in st.session_state:
         'modelLoaded': False,               # Model loading status
         'model': None,                      # Loaded model
         'modelInfo': {},                    # Model information
-        'threshold': 0.5,                   # Classification threshold
         'classificationResults': None,      # Classification results
         'isExecuting': False,               # Execution status
     }
@@ -42,7 +41,7 @@ if 'globalData' not in st.session_state:
         'textColumn': None,
         'outputDirectory': os.path.expanduser('~/Downloads'),
         'outputFileName': '',
-        'outputFormat': 'csv',
+        'outputFormat': None,
         'datasetLoaded': False,
         'originalFileName': ''
     }
@@ -109,7 +108,8 @@ st.markdown("---")
 with st.container(border=True):
     st.markdown("### 📁 Dataset Preview")
 
-    if st.session_state.globalData['datasetLoaded'] and st.session_state.globalData['dataset'] is not None:
+    config_status = get_configuration_status()
+    if config_status['complete']:
         dataset = st.session_state.globalData['dataset']
         text_column = st.session_state.globalData['textColumn']
 
@@ -255,9 +255,9 @@ with st.container(border=True):
         device_type = model_info.get('device_type', 'info')
 
         if device_type == 'success':
-            st.success(f"**Allocated Hardware:** {device_name}")
+            st.info(f"💡 **Allocated Hardware:** {device_name}")
         elif device_type == 'warning':
-            st.warning(f"**Allocated Hardware:** {device_name}")
+            st.info(f"💡 **Allocated Hardware:** {device_name}")
         else:
             st.info(f"💡 **Allocated Hardware:** {device_name}")
 
@@ -289,45 +289,67 @@ with st.container(border=True):
         st.markdown("---")
 
         # Test model section
-        st.markdown("#### 🧪 Test Model")
-        st.markdown("Enter text to test the model's toxicity detection.")
+        with st.expander("🧪 Test Model", expanded=False):
+            st.markdown("Enter text to test the model's toxicity detection.")
 
-        test_text = st.text_area(
-            "Test text:",
-            placeholder="Enter sample text to classify here...",
-            height=100,
-            key="detoxify_test_text"
-        )
+            test_text = st.text_area(
+                "Test text:",
+                placeholder="Enter sample text to classify here...",
+                height=100,
+                key="detoxify_test_text"
+            )
 
-        if st.button("🔍 Classify Test Text", use_container_width=True, key="test_detoxify"):
-            if test_text.strip():
-                with st.spinner("Classifying..."):
-                    result, error = classify_single_text(
-                        test_text,
-                        st.session_state.detoxifyData['model']
-                    )
+            if st.button("🔍 Classify Test Text", use_container_width=True, key="test_detoxify"):
+                if test_text.strip():
+                    with st.spinner("Classifying..."):
+                        result, error = classify_single_text(
+                            test_text,
+                            st.session_state.detoxifyData['model']
+                        )
 
-                    if error:
-                        st.error(f"❌ Error: {error}")
-                    else:
-                        st.markdown("**Classification Results:**")
-
-                        # Create a dataframe for display
-                        results_df = pd.DataFrame([
-                            {'Label': label, 'Score': f"{score:.4f}", 'Percentage': f"{score*100:.2f}%"}
-                            for label, score in result.items()
-                        ])
-                        results_df = results_df.sort_values('Score', ascending=False)
-                        st.dataframe(results_df, use_container_width=True, hide_index=True)
-
-                        # Show dominant label
-                        max_label = max(result.items(), key=lambda x: x[1])
-                        if max_label[1] >= 0.5:
-                            st.warning(f"⚠️ **Dominant Label:** {max_label[0]} ({max_label[1]*100:.2f}%)")
+                        if error:
+                            st.error(f"❌ Error: {error}")
                         else:
-                            st.success(f"✅ **Dominant Label:** {max_label[0]} ({max_label[1]*100:.2f}%) - Below threshold")
-            else:
-                st.warning("⚠️ Please enter text to test.")
+                            # Show dominant label with info notification
+                            max_label = max(result.items(), key=lambda x: x[1])
+                            st.info(f"💡 **Dominant Label:** {max_label[0]} ({max_label[1]*100:.2f}%)")
+
+                            st.markdown("**Scores by Label:**")
+
+                            # Create a dataframe for display
+                            results_df = pd.DataFrame([
+                                {'Label': label, 'Score': f"{score:.4f}", 'Percentage': f"{score*100:.2f}%"}
+                                for label, score in result.items()
+                            ])
+                            results_df = results_df.sort_values('Score', ascending=False)
+                            st.dataframe(results_df, use_container_width=True, hide_index=True)
+
+                            # Pie chart
+                            import plotly.express as px
+
+                            # Prepare data for pie chart
+                            pie_data = pd.DataFrame([
+                                {'Label': label, 'Score': score}
+                                for label, score in result.items()
+                            ])
+
+                            fig = px.pie(
+                                pie_data,
+                                values='Score',
+                                names='Label',
+                                title='Toxicity Score Distribution',
+                                hole=0.3  # Makes it a donut chart for better aesthetics
+                            )
+
+                            fig.update_traces(
+                                textposition='inside',
+                                textinfo='percent+label',
+                                hovertemplate='<b>%{label}</b><br>Score: %{value:.4f}<br>Percentage: %{percent}<extra></extra>'
+                            )
+
+                            st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.warning("⚠️ Please enter text to test.")
 
     # Step 1 completion indicator
     if step1_complete:
@@ -336,34 +358,11 @@ with st.container(border=True):
 st.markdown("")
 
 # =============================================================================
-# Step 2: Threshold Configuration
+# Step 2: Detoxify Classification
 # =============================================================================
 
-with st.container(border=True):
-    st.markdown("### ⚙️ Step 2: Classification Threshold")
-    st.markdown("Configure the threshold for positive classification.")
-
-    threshold = st.slider(
-        "Threshold for positive classification:",
-        min_value=0.0,
-        max_value=1.0,
-        value=st.session_state.detoxifyData.get('threshold', 0.5),
-        step=0.05,
-        help="Scores above this threshold will be considered positive for that label",
-        key="detoxify_threshold"
-    )
-    st.session_state.detoxifyData['threshold'] = threshold
-
-    st.info(f"� Current threshold: **{threshold:.2f}** - Scores ≥ {threshold:.2f} will be marked as positive.")
-
-st.markdown("")
-
-# =============================================================================
-# Step 3: Detoxify Classification
-# =============================================================================
-
-# Check if step 3 is complete
-step3_complete = st.session_state.detoxifyData['classificationResults'] is not None
+# Check if step 2 is complete
+step2_complete = st.session_state.detoxifyData['classificationResults'] is not None
 
 # Check if ready for classification
 can_classify = (
@@ -373,7 +372,7 @@ can_classify = (
 )
 
 with st.container(border=True):
-    st.markdown("### 🚀 Step 3: Toxicity Classification")
+    st.markdown("### 🚀 Step 2: Toxicity Classification")
 
     if can_classify:
         st.markdown("✅ Everything ready for classification!")
@@ -429,14 +428,10 @@ with st.container(border=True):
                     status_text.text("Organizing results...")
 
                     # Create results dataframe
-                    labels = st.session_state.detoxifyData['modelInfo']['labels']
-                    threshold = st.session_state.detoxifyData['threshold']
                     results_df = create_results_dataframe(
                         dataset,
                         text_column,
-                        classification_results,
-                        labels,
-                        threshold
+                        classification_results
                     )
 
                     # Update global dataset with classification results
@@ -477,9 +472,9 @@ with st.container(border=True):
         for item in missing:
             st.markdown(f"- {item}")
 
-    # Step 3 completion indicator
-    if step3_complete:
-        st.success("✅ **Step 3 completed!** Classification performed successfully.")
+    # Step 2 completion indicator
+    if step2_complete:
+        st.success("✅ **Step 2 completed!** Classification performed successfully.")
 
         # Results Preview
         st.markdown("---")
@@ -487,16 +482,52 @@ with st.container(border=True):
 
         results_df = st.session_state.detoxifyData['classificationResults']
 
-        # Show toxicity distribution
-        st.markdown("**Toxicity Distribution (is_toxic_any):**")
-        toxic_dist = results_df['is_toxic_any'].value_counts()
-        toxic_dist.index = toxic_dist.index.map({True: 'Toxic', False: 'Not Toxic'})
-        st.bar_chart(toxic_dist)
+        # Show threshold-based distribution chart
+        st.markdown("**Threshold-based Class Distribution:**")
+        st.markdown("This chart shows how many comments would be classified as each class at different probability thresholds.")
 
-        # Show dominant label distribution
-        st.markdown("**Dominant Label Distribution:**")
-        label_dist = results_df['dominant_label'].value_counts()
-        st.bar_chart(label_dist)
+        import plotly.graph_objects as go
+        import numpy as np
+
+        # Get probability columns
+        prob_columns = [col for col in results_df.columns if col.startswith('detoxify_prob_')]
+
+        # Generate thresholds from 0.0 to 1.0
+        thresholds = np.linspace(0.0, 1.0, 101)
+
+        fig = go.Figure()
+
+        # Add a line for each class
+        colors = ['#636EFA', '#EF553B', '#00CC96', '#AB63FA', '#FFA15A', '#19D3F3', '#FF6692', '#B6E880']
+
+        for idx, col in enumerate(prob_columns):
+            class_name = col.replace('detoxify_prob_', '')
+            counts_at_threshold = []
+
+            for threshold in thresholds:
+                count = (results_df[col] >= threshold).sum()
+                counts_at_threshold.append(count)
+
+            color = colors[idx % len(colors)]
+            fig.add_trace(go.Scatter(
+                x=thresholds,
+                y=counts_at_threshold,
+                mode='lines',
+                name=class_name,
+                line=dict(color=color, width=2),
+                hovertemplate=f'<b>{class_name}</b><br>Threshold: %{{x:.2f}}<br>Count: %{{y}}<extra></extra>'
+            ))
+
+        fig.update_layout(
+            title='Comments per Class at Different Thresholds',
+            xaxis_title='Probability Threshold',
+            yaxis_title='Number of Comments',
+            hovermode='x unified',
+            legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
+            height=500
+        )
+
+        st.plotly_chart(fig, use_container_width=True)
 
         # Show preview
         st.markdown("**Classified Dataset Preview:**")
@@ -507,4 +538,4 @@ with st.container(border=True):
         output_filename = st.session_state.globalData['outputFileName']
         output_directory = st.session_state.globalData['outputDirectory']
         full_path = os.path.join(output_directory, f"{output_filename}.{output_format}")
-        st.success(f"✅ File saved at: `{full_path}`")
+        st.info(f"💡 File saved at: `{full_path}`")
