@@ -8,6 +8,10 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 import os
+import re
+from wordcloud import WordCloud
+import matplotlib.pyplot as plt
+from io import BytesIO
 
 from components.navigation import render_navigation, get_configuration_status
 
@@ -107,17 +111,17 @@ def create_threshold_chart(df, prob_columns, title, height=350):
     """
     fig = go.Figure()
     colors = ['#636EFA', '#EF553B', '#00CC96', '#AB63FA', '#FFA15A', '#19D3F3', '#FF6692', '#B6E880']
-    
+
     # Generate thresholds from 0.0 to 1.0
     thresholds = np.linspace(0.0, 1.0, 101)
-    
+
     for idx, (label, col) in enumerate(prob_columns.items()):
         counts_at_threshold = []
-        
+
         for threshold in thresholds:
             count = (df[col] >= threshold).sum()
             counts_at_threshold.append(count)
-        
+
         color = colors[idx % len(colors)]
         fig.add_trace(go.Scatter(
             x=thresholds,
@@ -127,7 +131,7 @@ def create_threshold_chart(df, prob_columns, title, height=350):
             line=dict(color=color, width=2),
             hovertemplate=f'<b>{label}</b><br>Threshold: %{{x:.2f}}<br>Count: %{{y}}<extra></extra>'
         ))
-    
+
     fig.update_layout(
         title=dict(text=title, font=dict(size=14)),
         xaxis_title='Probability Threshold',
@@ -145,7 +149,7 @@ def create_threshold_chart(df, prob_columns, title, height=350):
         ),
         xaxis=dict(range=[0, 1])
     )
-    
+
     return fig
 
 def create_confidence_donut(df, llm_cols, title, height=350):
@@ -154,17 +158,17 @@ def create_confidence_donut(df, llm_cols, title, height=350):
     """
     if 'confidence' not in llm_cols:
         return None
-    
+
     confidence_counts = df[llm_cols['confidence']].value_counts()
-    
+
     # Define colors for confidence levels
     color_map = {
         'high': '#2ecc71',
-        'medium': '#f39c12', 
+        'medium': '#f39c12',
         'low': '#e74c3c'
     }
     colors = [color_map.get(str(c).lower(), '#95a5a6') for c in confidence_counts.index]
-    
+
     fig = go.Figure(data=[go.Pie(
         labels=confidence_counts.index,
         values=confidence_counts.values,
@@ -173,7 +177,7 @@ def create_confidence_donut(df, llm_cols, title, height=350):
         textinfo='percent+label',
         textfont=dict(size=11)
     )])
-    
+
     fig.update_layout(
         title=dict(text=title, font=dict(size=14)),
         height=height,
@@ -186,7 +190,7 @@ def create_confidence_donut(df, llm_cols, title, height=350):
             showarrow=False
         )]
     )
-    
+
     return fig
 
 def create_class_distribution_donut(df, prob_columns, threshold, title, height=350):
@@ -195,21 +199,21 @@ def create_class_distribution_donut(df, prob_columns, threshold, title, height=3
     Classes are determined by probability >= threshold.
     """
     class_counts = {}
-    
+
     for label, col in prob_columns.items():
         count = (df[col] >= threshold).sum()
         if count > 0:
             class_counts[label] = count
-    
+
     if not class_counts:
         # If no class meets threshold, show "Below threshold"
         class_counts = {'Below threshold': len(df)}
-    
+
     labels = list(class_counts.keys())
     values = list(class_counts.values())
-    
+
     colors = px.colors.qualitative.Set3[:len(labels)]
-    
+
     fig = go.Figure(data=[go.Pie(
         labels=labels,
         values=values,
@@ -218,7 +222,7 @@ def create_class_distribution_donut(df, prob_columns, threshold, title, height=3
         textinfo='percent+label',
         textfont=dict(size=10)
     )])
-    
+
     fig.update_layout(
         title=dict(text=title, font=dict(size=14)),
         height=height,
@@ -231,7 +235,7 @@ def create_class_distribution_donut(df, prob_columns, threshold, title, height=3
             showarrow=False
         )]
     )
-    
+
     return fig
 
 def create_llm_class_distribution_donut(df, llm_cols, confidence_filter, title, height=350):
@@ -240,10 +244,10 @@ def create_llm_class_distribution_donut(df, llm_cols, confidence_filter, title, 
     """
     if 'classification' not in llm_cols or 'confidence' not in llm_cols:
         return None
-    
+
     # Filter by confidence
     filtered_df = df[df[llm_cols['confidence']].str.lower().isin([c.lower() for c in confidence_filter])]
-    
+
     if len(filtered_df) == 0:
         fig = go.Figure()
         fig.add_annotation(
@@ -259,11 +263,11 @@ def create_llm_class_distribution_donut(df, llm_cols, confidence_filter, title, 
             margin=dict(l=20, r=20, t=40, b=20)
         )
         return fig
-    
+
     class_counts = filtered_df[llm_cols['classification']].value_counts()
-    
+
     colors = px.colors.qualitative.Set3[:len(class_counts)]
-    
+
     fig = go.Figure(data=[go.Pie(
         labels=class_counts.index,
         values=class_counts.values,
@@ -272,9 +276,9 @@ def create_llm_class_distribution_donut(df, llm_cols, confidence_filter, title, 
         textinfo='percent+label',
         textfont=dict(size=10)
     )])
-    
+
     confidence_str = ', '.join(confidence_filter)
-    
+
     fig.update_layout(
         title=dict(text=title, font=dict(size=14)),
         height=height,
@@ -287,8 +291,159 @@ def create_llm_class_distribution_donut(df, llm_cols, confidence_filter, title, 
             showarrow=False
         )]
     )
-    
+
     return fig
+
+# =============================================================================
+# Helper Functions - Top Comments Table
+# =============================================================================
+
+def detect_likes_column(df):
+    """Detect the column containing like counts."""
+    possible_names = ['like_count', 'likes', 'likeCount', 'like_counts', 'num_likes']
+    for name in possible_names:
+        if name in df.columns:
+            return name
+    return None
+
+def detect_author_column(df):
+    """Detect the column containing author/user names."""
+    possible_names = ['author', 'user', 'username', 'authorDisplayName', 'user_name', 'channel']
+    for name in possible_names:
+        if name in df.columns:
+            return name
+    return None
+
+def detect_reply_count_column(df):
+    """Detect the column containing reply counts."""
+    possible_names = ['reply_count', 'replies', 'replyCount', 'reply_counts', 'num_replies', 'totalReplyCount']
+    for name in possible_names:
+        if name in df.columns:
+            return name
+    return None
+
+def get_probability_value_color(value):
+    """
+    Get background color for probability value (red to green gradient).
+    Low probability = red, High probability = green.
+    """
+    if pd.isna(value):
+        return 'background-color: #f0f0f0'
+
+    # Clamp value between 0 and 1
+    value = max(0, min(1, float(value)))
+
+    # Red (low) to Yellow (medium) to Green (high)
+    if value <= 0.5:
+        # Red to Yellow (0 to 0.5)
+        ratio = value * 2  # 0 to 1
+        r = int(231 + (255 - 231) * ratio)  # 231 to 255
+        g = int(76 + (193 - 76) * ratio)   # 76 to 193
+        b = int(60 - (60 - 7) * ratio)     # 60 to 7
+    else:
+        # Yellow to Green (0.5 to 1)
+        ratio = (value - 0.5) * 2  # 0 to 1
+        r = int(255 - (255 - 46) * ratio)  # 255 to 46
+        g = int(193 + (204 - 193) * ratio) # 193 to 204
+        b = int(7 + (113 - 7) * ratio)     # 7 to 113
+
+    return f'background-color: rgba({r}, {g}, {b}, 0.7); color: black'
+
+def style_probability_columns(df, prob_columns):
+    """
+    Apply color styling to probability columns in a dataframe.
+    """
+    def apply_color(val):
+        return get_probability_value_color(val)
+
+    # Create a styler
+    styler = df.style
+
+    for col in prob_columns:
+        if col in df.columns:
+            styler = styler.applymap(apply_color, subset=[col])
+
+    return styler
+
+def create_top_comments_table(df, text_column, likes_col, author_col, reply_col, bert_cols, detoxify_cols, llm_cols, sort_by='likes', top_n=20):
+    """
+    Create a styled dataframe with top comments.
+    
+    Args:
+        sort_by: 'likes' or 'replies' to determine sorting column
+    """
+    # Determine sort column
+    if sort_by == 'replies' and reply_col:
+        sort_col = reply_col
+    elif likes_col:
+        sort_col = likes_col
+    else:
+        return None, "No sorting column found in dataset"
+
+    # Sort by selected column
+    df_sorted = df.sort_values(by=sort_col, ascending=False).head(top_n).copy()
+
+    # Build display columns
+    display_cols = []
+    rename_map = {}
+
+    # Likes column
+    if likes_col and likes_col in df.columns:
+        display_cols.append(likes_col)
+        rename_map[likes_col] = '👍 Likes'
+
+    # Reply count column
+    if reply_col and reply_col in df.columns:
+        display_cols.append(reply_col)
+        rename_map[reply_col] = '💬 Replies'
+
+    # Author column (if exists)
+    if author_col and author_col in df.columns:
+        display_cols.append(author_col)
+        rename_map[author_col] = '👤 Author'
+
+    # Text column
+    if text_column and text_column in df.columns:
+        display_cols.append(text_column)
+        rename_map[text_column] = '📝 Comment'
+
+    # Probability columns
+    prob_columns = []
+
+    # BERT columns
+    for label, col in bert_cols.items():
+        if col in df.columns:
+            display_cols.append(col)
+            rename_map[col] = f'🤖 {label}'
+            prob_columns.append(f'🤖 {label}')
+
+    # Detoxify columns
+    for label, col in detoxify_cols.items():
+        if col in df.columns:
+            display_cols.append(col)
+            rename_map[col] = f'🛡️ {label}'
+            prob_columns.append(f'🛡️ {label}')
+
+    # LLM columns
+    if 'classification' in llm_cols and llm_cols['classification'] in df.columns:
+        display_cols.append(llm_cols['classification'])
+        rename_map[llm_cols['classification']] = '🧠 LLM Class'
+
+    if 'confidence' in llm_cols and llm_cols['confidence'] in df.columns:
+        display_cols.append(llm_cols['confidence'])
+        rename_map[llm_cols['confidence']] = '🧠 Confidence'
+
+    # Filter to only existing columns
+    display_cols = [col for col in display_cols if col in df_sorted.columns]
+
+    # Create display dataframe
+    df_display = df_sorted[display_cols].copy()
+    df_display = df_display.rename(columns=rename_map)
+
+    # Reset index
+    df_display = df_display.reset_index(drop=True)
+
+    return df_display, prob_columns
 
 # =============================================================================
 # Main Content
@@ -367,16 +522,16 @@ st.markdown("")
 config_status = get_configuration_status()
 if config_status['complete']:
     dataset = st.session_state.globalData['dataset']
-    
+
     # Parse columns for each classifier
     bert_cols = get_bert_columns(dataset)
     detoxify_cols = get_detoxify_columns(dataset)
     llm_cols = get_llm_columns(dataset)
-    
+
     has_bert = len(bert_cols) > 0
     has_detoxify = len(detoxify_cols) > 0
     has_llm = len(llm_cols) > 0
-    
+
     # Check if any classifier data exists
     if not has_bert and not has_detoxify and not has_llm:
         st.warning("⚠️ **No classification data found.** Please run at least one classifier (BERT, Detoxify, or LLM) before using this analysis page.")
@@ -384,7 +539,7 @@ if config_status['complete']:
         with st.container(border=True):
             st.markdown("### 📈 Classification Comparison")
             st.markdown("Compare results from all available classifiers side by side.")
-            
+
             # Show which classifiers are available
             available_classifiers = []
             if has_bert:
@@ -393,30 +548,30 @@ if config_status['complete']:
                 available_classifiers.append("🛡️ Detoxify")
             if has_llm:
                 available_classifiers.append("🧠 LLM")
-            
+
             st.info(f"**Available classifiers:** {', '.join(available_classifiers)}")
-            
+
             st.markdown("---")
-            
+
             # =============================================================================
             # Row 1: Threshold Curves / Confidence Distribution
             # =============================================================================
-            
-            st.markdown("#### 📊 Row 1: Threshold-based Class Distribution")
-            
+
+            st.markdown("#### 📊 Threshold-based Class Distribution")
+
             col_bert, col_detoxify, col_llm = st.columns(3)
-            
+
             with col_bert:
                 st.markdown("##### 🤖 BERT Classifier")
                 if has_bert:
                     fig_threshold_bert = create_threshold_chart(
-                        dataset, bert_cols, 
+                        dataset, bert_cols,
                         "Texts per Class at Threshold - BERT"
                     )
                     st.plotly_chart(fig_threshold_bert, use_container_width=True)
                 else:
                     st.info("No BERT classification data available.")
-            
+
             with col_detoxify:
                 st.markdown("##### 🛡️ Detoxify Classifier")
                 if has_detoxify:
@@ -427,7 +582,7 @@ if config_status['complete']:
                     st.plotly_chart(fig_threshold_detoxify, use_container_width=True)
                 else:
                     st.info("No Detoxify classification data available.")
-            
+
             with col_llm:
                 st.markdown("##### 🧠 LLM Classifier")
                 if has_llm and 'confidence' in llm_cols:
@@ -439,17 +594,17 @@ if config_status['complete']:
                         st.plotly_chart(fig_confidence, use_container_width=True)
                 else:
                     st.info("No LLM classification data available.")
-            
+
             st.markdown("---")
-            
+
             # =============================================================================
             # Row 2: Threshold / Filter Selection
             # =============================================================================
-            
-            st.markdown("#### 🎚️ Row 2: Threshold & Filter Selection")
-            
+
+            st.markdown("#### 🎚️ Threshold & Filter Selection")
+
             col_bert_thresh, col_detoxify_thresh, col_llm_filter = st.columns(3)
-            
+
             with col_bert_thresh:
                 st.markdown("##### 🤖 BERT Threshold")
                 if has_bert:
@@ -466,7 +621,7 @@ if config_status['complete']:
                 else:
                     st.info("No BERT data to filter.")
                     bert_threshold = 0.5
-            
+
             with col_detoxify_thresh:
                 st.markdown("##### 🛡️ Detoxify Threshold")
                 if has_detoxify:
@@ -483,23 +638,23 @@ if config_status['complete']:
                 else:
                     st.info("No Detoxify data to filter.")
                     detoxify_threshold = 0.5
-            
+
             with col_llm_filter:
                 st.markdown("##### 🧠 LLM Confidence Filter")
                 if has_llm and 'confidence' in llm_cols:
                     # Get unique confidence levels
                     unique_confidences = dataset[llm_cols['confidence']].dropna().unique()
                     confidence_options = [str(c) for c in unique_confidences]
-                    
+
                     # Default to all selected
                     default_selection = st.session_state.analysisState.get('llm_confidence_filter', confidence_options)
-                    
+
                     # Multi-select buttons using checkboxes
                     st.markdown("Select confidence levels:")
-                    
+
                     selected_confidences = []
                     cols_check = st.columns(len(confidence_options) if len(confidence_options) <= 3 else 3)
-                    
+
                     for i, conf in enumerate(confidence_options):
                         col_idx = i % 3
                         with cols_check[col_idx]:
@@ -510,7 +665,7 @@ if config_status['complete']:
                                 emoji = "🟡"
                             else:
                                 emoji = "🔴"
-                            
+
                             is_selected = st.checkbox(
                                 f"{emoji} {conf.capitalize()}",
                                 value=conf in default_selection,
@@ -518,23 +673,23 @@ if config_status['complete']:
                             )
                             if is_selected:
                                 selected_confidences.append(conf)
-                    
+
                     st.session_state.analysisState['llm_confidence_filter'] = selected_confidences
                     llm_confidence_filter = selected_confidences
                 else:
                     st.info("No LLM data to filter.")
                     llm_confidence_filter = []
-            
+
             st.markdown("---")
-            
+
             # =============================================================================
             # Row 3: Class Distribution Donuts (Filtered)
             # =============================================================================
-            
-            st.markdown("#### 🍩 Row 3: Class Distribution (Filtered)")
-            
+
+            st.markdown("#### 🍩 Class Distribution (Filtered)")
+
             col_bert_dist, col_detoxify_dist, col_llm_dist = st.columns(3)
-            
+
             with col_bert_dist:
                 st.markdown("##### 🤖 BERT Classes")
                 if has_bert:
@@ -543,13 +698,13 @@ if config_status['complete']:
                         f"BERT Classes (≥{bert_threshold:.2f})"
                     )
                     st.plotly_chart(fig_bert_dist, use_container_width=True)
-                    
+
                     # Show count details
                     total_above = sum((dataset[col] >= bert_threshold).sum() for col in bert_cols.values())
                     st.caption(f"Total samples above threshold: {total_above:,}")
                 else:
                     st.info("No BERT classification data available.")
-            
+
             with col_detoxify_dist:
                 st.markdown("##### 🛡️ Detoxify Classes")
                 if has_detoxify:
@@ -558,13 +713,13 @@ if config_status['complete']:
                         f"Detoxify Classes (≥{detoxify_threshold:.2f})"
                     )
                     st.plotly_chart(fig_detoxify_dist, use_container_width=True)
-                    
+
                     # Show count details
                     total_above = sum((dataset[col] >= detoxify_threshold).sum() for col in detoxify_cols.values())
                     st.caption(f"Total samples above threshold: {total_above:,}")
                 else:
                     st.info("No Detoxify classification data available.")
-            
+
             with col_llm_dist:
                 st.markdown("##### 🧠 LLM Classes")
                 if has_llm and 'classification' in llm_cols and llm_confidence_filter:
@@ -574,7 +729,7 @@ if config_status['complete']:
                     )
                     if fig_llm_dist:
                         st.plotly_chart(fig_llm_dist, use_container_width=True)
-                    
+
                     # Show count details
                     filtered_count = len(dataset[dataset[llm_cols['confidence']].str.lower().isin([c.lower() for c in llm_confidence_filter])])
                     st.caption(f"Samples matching filter: {filtered_count:,}")
@@ -582,4 +737,584 @@ if config_status['complete']:
                     st.warning("Please select at least one confidence level.")
                 else:
                     st.info("No LLM classification data available.")
+
+        # =============================================================================
+        # Top Comments by Likes Section
+        # =============================================================================
+
+        st.markdown("")
+
+        with st.container(border=True):
+            st.markdown("### 🏆 Top Comments")
+            st.markdown("Comments with the highest engagement (likes or replies) and their classification probabilities.")
+
+            # Detect columns
+            likes_col = detect_likes_column(dataset)
+            reply_col = detect_reply_count_column(dataset)
+            author_col = detect_author_column(dataset)
+            text_column = st.session_state.globalData['textColumn']
+
+            if likes_col is None and reply_col is None:
+                st.warning("⚠️ **No engagement columns found.** This feature requires columns with like counts or reply counts.")
+            else:
+                # Selectors
+                col1, col2, col3 = st.columns([1, 1, 2])
+
+                with col1:
+                    top_n = st.selectbox(
+                        "Show top:",
+                        options=[10, 20, 50, 100],
+                        index=1,
+                        key="top_n_comments"
+                    )
+
+                with col2:
+                    # Sort by selector
+                    sort_options = []
+                    if likes_col:
+                        sort_options.append('Likes')
+                    if reply_col:
+                        sort_options.append('Replies')
+
+                    if len(sort_options) > 0:
+                        sort_choice = st.selectbox(
+                            "Sort by:",
+                            options=sort_options,
+                            index=0,
+                            key="sort_by_comments"
+                        )
+                        sort_by = 'likes' if sort_choice == 'Likes' else 'replies'
+                    else:
+                        sort_by = 'likes'
+
+                # Create table
+                df_display, prob_columns = create_top_comments_table(
+                    dataset, text_column, likes_col, author_col, reply_col,
+                    bert_cols, detoxify_cols, llm_cols, sort_by, top_n
+                )
+
+                if df_display is not None:
+                    # Add CSS for better table styling
+                    st.markdown("""
+                        <style>
+                        .dataframe {
+                            font-size: 12px;
+                        }
+                        .dataframe td {
+                            max-width: 300px;
+                            overflow: hidden;
+                            text-overflow: ellipsis;
+                            white-space: nowrap;
+                        }
+                        </style>
+                    """, unsafe_allow_html=True)
+
+                    # Apply styling to probability columns
+                    if prob_columns:
+                        # Format probability columns to 3 decimal places
+                        format_dict = {col: '{:.3f}' for col in prob_columns if col in df_display.columns}
+
+                        # Apply color styling
+                        styled_df = df_display.style.applymap(
+                            lambda val: get_probability_value_color(val) if isinstance(val, (int, float)) and 0 <= val <= 1 else '',
+                            subset=[col for col in prob_columns if col in df_display.columns]
+                        ).format(format_dict)
+
+                        st.dataframe(
+                            styled_df,
+                            use_container_width=True,
+                            height=min(400 + (top_n * 10), 800),
+                            hide_index=True
+                        )
+                    else:
+                        st.dataframe(
+                            df_display,
+                            use_container_width=True,
+                            height=min(400 + (top_n * 10), 800),
+                            hide_index=True
+                        )
+                else:
+                    st.error("Error creating the table.")
+
+        # =============================================================================
+        # Word Cloud Section
+        # =============================================================================
+
+        st.markdown("")
+
+        with st.container(border=True):
+            st.markdown("### ☁️ Word Cloud")
+            st.markdown("Visualize the most frequent words in the comments.")
+
+            text_column = st.session_state.globalData['textColumn']
+
+            if text_column and text_column in dataset.columns:
+                # Filter options
+                col1, col2 = st.columns(2)
+
+                with col1:
+                    max_words = st.slider(
+                        "Maximum words:",
+                        min_value=10,
+                        max_value=200,
+                        value=100,
+                        step=10,
+                        key="wordcloud_max_words"
+                    )
+
+                with col2:
+                    min_word_length = st.slider(
+                        "Minimum word length:",
+                        min_value=1,
+                        max_value=10,
+                        value=3,
+                        step=1,
+                        key="wordcloud_min_length"
+                    )
+
+                # Optional: Filter by classification
+                st.markdown("**Optional: Filter by classification**")
+
+                filter_col1, filter_col2, filter_col3 = st.columns(3)
+
+                filtered_texts = dataset[text_column].astype(str).tolist()
+                filter_applied = False
+                combined_mask = None
+
+                with filter_col1:
+                    if has_bert and bert_cols:
+                        bert_filter_classes = st.multiselect(
+                            "🤖 BERT class filter:",
+                            options=list(bert_cols.keys()),
+                            default=[],
+                            key="wordcloud_bert_filter"
+                        )
+                        if bert_filter_classes:
+                            bert_threshold_wc = st.slider(
+                                "BERT threshold:",
+                                0.0, 1.0, 0.5, 0.05,
+                                key="wordcloud_bert_threshold"
+                            )
+                            # Create mask for any selected class meeting threshold
+                            bert_mask = pd.Series([False] * len(dataset))
+                            for cls in bert_filter_classes:
+                                bert_mask = bert_mask | (dataset[bert_cols[cls]] >= bert_threshold_wc)
+                            combined_mask = bert_mask if combined_mask is None else combined_mask & bert_mask
+                            filter_applied = True
+
+                with filter_col2:
+                    if has_detoxify and detoxify_cols:
+                        detox_filter_classes = st.multiselect(
+                            "🛡️ Detoxify class filter:",
+                            options=list(detoxify_cols.keys()),
+                            default=[],
+                            key="wordcloud_detox_filter"
+                        )
+                        if detox_filter_classes:
+                            detox_threshold_wc = st.slider(
+                                "Detoxify threshold:",
+                                0.0, 1.0, 0.5, 0.05,
+                                key="wordcloud_detox_threshold"
+                            )
+                            # Create mask for any selected class meeting threshold
+                            detox_mask = pd.Series([False] * len(dataset))
+                            for cls in detox_filter_classes:
+                                detox_mask = detox_mask | (dataset[detoxify_cols[cls]] >= detox_threshold_wc)
+                            combined_mask = detox_mask if combined_mask is None else combined_mask & detox_mask
+                            filter_applied = True
+
+                with filter_col3:
+                    if has_llm and 'classification' in llm_cols:
+                        llm_classes_available = list(dataset[llm_cols['classification']].dropna().unique())
+                        llm_filter_classes = st.multiselect(
+                            "🧠 LLM class filter:",
+                            options=llm_classes_available,
+                            default=[],
+                            key="wordcloud_llm_filter"
+                        )
+                        if llm_filter_classes:
+                            llm_mask = dataset[llm_cols['classification']].isin(llm_filter_classes)
+                            combined_mask = llm_mask if combined_mask is None else combined_mask & llm_mask
+                            filter_applied = True
+
+                # Apply combined filter
+                if filter_applied and combined_mask is not None:
+                    filtered_texts = dataset[combined_mask][text_column].astype(str).tolist()
+
+                # Generate word cloud
+                if st.button("Generate Word Cloud", use_container_width=True, type="primary", key="generate_wordcloud"):
+                    if len(filtered_texts) > 0:
+                        with st.spinner("Generating word cloud..."):
+                            # Combine all texts
+                            all_text = ' '.join(filtered_texts)
+
+                            # Clean text: remove URLs, mentions, special characters
+                            all_text = re.sub(r'http\S+|www\S+|https\S+', '', all_text)
+                            all_text = re.sub(r'@\w+', '', all_text)
+                            all_text = re.sub(r'#\w+', '', all_text)
+                            all_text = re.sub(r'[^\w\s]', ' ', all_text)
+                            all_text = re.sub(r'\s+', ' ', all_text)
+                            all_text = all_text.lower()
+
+                            # Filter by word length
+                            words = all_text.split()
+                            words = [w for w in words if len(w) >= min_word_length]
+                            all_text = ' '.join(words)
+
+                            if all_text.strip():
+                                # Generate word cloud
+                                wordcloud = WordCloud(
+                                    width=1200,
+                                    height=600,
+                                    max_words=max_words,
+                                    background_color='white',
+                                    colormap='viridis',
+                                    min_word_length=min_word_length,
+                                    collocations=False,
+                                    random_state=42
+                                ).generate(all_text)
+
+                                # Create figure
+                                fig, ax = plt.subplots(figsize=(15, 8))
+                                ax.imshow(wordcloud, interpolation='bilinear')
+                                ax.axis('off')
+                                plt.tight_layout(pad=0)
+
+                                # Save to buffer
+                                buf = BytesIO()
+                                plt.savefig(buf, format='png', dpi=150, bbox_inches='tight')
+                                buf.seek(0)
+                                plt.close()
+
+                                # Display
+                                st.image(buf, use_container_width=True)
+                            else:
+                                st.warning("⚠️ No text available after filtering.")
+                    else:
+                        st.warning("⚠️ No texts match the selected filter.")
+            else:
+                st.warning("⚠️ **No text column configured.** Please select a text column in the Home page.")
+
+
+# =============================================================================
+# Time Series Analysis Section
+# =============================================================================
+
+def parse_datetime_column(df, column_name):
+    """
+    Try to parse a column as datetime using multiple formats.
+    Returns a Series with parsed datetime values or None if parsing fails.
+    """
+    if column_name not in df.columns:
+        return None
+
+    column_data = df[column_name].copy()
+
+    # List of datetime formats to try
+    datetime_formats = [
+        '%Y-%m-%d %H:%M:%S',
+        '%Y-%m-%d %H:%M:%S.%f',
+        '%Y-%m-%d',
+        '%d/%m/%Y %H:%M:%S',
+        '%d/%m/%Y',
+        '%m/%d/%Y %H:%M:%S',
+        '%m/%d/%Y',
+        '%Y/%m/%d %H:%M:%S',
+        '%Y/%m/%d',
+        '%d-%m-%Y %H:%M:%S',
+        '%d-%m-%Y',
+        '%Y-%m-%dT%H:%M:%S',
+        '%Y-%m-%dT%H:%M:%S.%f',
+        '%Y-%m-%dT%H:%M:%SZ',
+        '%Y-%m-%dT%H:%M:%S.%fZ',
+    ]
+
+    # Try pandas to_datetime with infer_datetime_format first
+    try:
+        parsed = pd.to_datetime(column_data, infer_datetime_format=True, errors='coerce')
+        if parsed.notna().sum() > 0:
+            return parsed
+    except:
+        pass
+
+    # Try each format explicitly
+    for fmt in datetime_formats:
+        try:
+            parsed = pd.to_datetime(column_data, format=fmt, errors='coerce')
+            if parsed.notna().sum() > 0:
+                return parsed
+        except:
+            continue
+
+    # Try parsing as unix timestamp (seconds)
+    try:
+        if pd.api.types.is_numeric_dtype(column_data):
+            parsed = pd.to_datetime(column_data, unit='s', errors='coerce')
+            if parsed.notna().sum() > 0:
+                return parsed
+    except:
+        pass
+
+    # Try parsing as unix timestamp (milliseconds)
+    try:
+        if pd.api.types.is_numeric_dtype(column_data):
+            parsed = pd.to_datetime(column_data, unit='ms', errors='coerce')
+            if parsed.notna().sum() > 0:
+                return parsed
+    except:
+        pass
+
+    return None
+
+
+def create_time_series_chart(df, datetime_col, classifier_type, threshold, selected_classes):
+    """
+    Create a time series chart showing class distribution over time.
+    
+    Parameters:
+    - df: DataFrame with data
+    - datetime_col: Column name with datetime data
+    - classifier_type: 'bert', 'detoxify', or 'llm'
+    - threshold: Probability threshold (for bert and detoxify)
+    - selected_classes: List of classes to display
+    """
+    # Parse datetime column
+    datetime_series = parse_datetime_column(df, datetime_col)
+
+    if datetime_series is None or datetime_series.isna().all():
+        return None, "Could not parse datetime column"
+
+    # Create working dataframe
+    df_work = df.copy()
+    df_work['parsed_datetime'] = datetime_series
+    df_work = df_work.dropna(subset=['parsed_datetime'])
+    df_work = df_work.sort_values('parsed_datetime')
+
+    if len(df_work) == 0:
+        return None, "No valid datetime values found"
+
+    # Get probability columns based on classifier type
+    if classifier_type == 'bert':
+        prob_cols_dict = get_bert_columns(df_work)
+        if not prob_cols_dict:
+            return None, "No BERT classification columns found"
+    elif classifier_type == 'detoxify':
+        prob_cols_dict = get_detoxify_columns(df_work)
+        if not prob_cols_dict:
+            return None, "No Detoxify classification columns found"
+    elif classifier_type == 'llm':
+        if 'llm_classification' not in df_work.columns:
+            return None, "No LLM classification column found"
+    else:
+        return None, "Invalid classifier type"
+
+    # Prepare data for time series
+    if classifier_type in ['bert', 'detoxify']:
+        # For BERT and Detoxify: count texts above threshold for each class
+        df_work['date_hour'] = df_work['parsed_datetime'].dt.floor('H')  # Group by hour
+
+        time_series_data = []
+        for date_hour in sorted(df_work['date_hour'].unique()):
+            df_hour = df_work[df_work['date_hour'] == date_hour]
+
+            # Iterate over dictionary items (class_name: column_name)
+            for class_name, prob_col in prob_cols_dict.items():
+                if class_name in selected_classes:
+                    count = (df_hour[prob_col] >= threshold).sum()
+                    time_series_data.append({
+                        'datetime': date_hour,
+                        'class': class_name,
+                        'count': count
+                    })
+
+        df_ts = pd.DataFrame(time_series_data)
+
+        if len(df_ts) == 0:
+            return None, "No data matches the selected criteria"
+
+        # Create line chart
+        fig = go.Figure()
+
+        for class_name in selected_classes:
+            df_class = df_ts[df_ts['class'] == class_name]
+            if len(df_class) > 0:
+                fig.add_trace(go.Scatter(
+                    x=df_class['datetime'],
+                    y=df_class['count'],
+                    mode='lines+markers',
+                    name=class_name,
+                    line=dict(width=2),
+                    marker=dict(size=6)
+                ))
+
+        fig.update_layout(
+            title=f"{classifier_type.upper()} Classification Over Time (Threshold ≥ {threshold:.2f})",
+            xaxis_title="Date/Time",
+            yaxis_title="Number of Texts",
+            hovermode='x unified',
+            height=500,
+            showlegend=True,
+            legend=dict(
+                orientation="v",
+                yanchor="top",
+                y=1,
+                xanchor="left",
+                x=1.02
+            )
+        )
+
+    else:  # LLM
+        # For LLM: count texts for each classification
+        df_work['date_hour'] = df_work['parsed_datetime'].dt.floor('H')
+
+        time_series_data = []
+        for date_hour in sorted(df_work['date_hour'].unique()):
+            df_hour = df_work[df_work['date_hour'] == date_hour]
+
+            for class_name in selected_classes:
+                count = (df_hour['llm_classification'] == class_name).sum()
+                time_series_data.append({
+                    'datetime': date_hour,
+                    'class': class_name,
+                    'count': count
+                })
+
+        df_ts = pd.DataFrame(time_series_data)
+
+        if len(df_ts) == 0:
+            return None, "No data matches the selected criteria"
+
+        # Create line chart
+        fig = go.Figure()
+
+        for class_name in selected_classes:
+            df_class = df_ts[df_ts['class'] == class_name]
+            if len(df_class) > 0:
+                fig.add_trace(go.Scatter(
+                    x=df_class['datetime'],
+                    y=df_class['count'],
+                    mode='lines+markers',
+                    name=class_name,
+                    line=dict(width=2),
+                    marker=dict(size=6)
+                ))
+
+        fig.update_layout(
+            title=f"LLM Classification Over Time",
+            xaxis_title="Date/Time",
+            yaxis_title="Number of Texts",
+            hovermode='x unified',
+            height=500,
+            showlegend=True,
+            legend=dict(
+                orientation="v",
+                yanchor="top",
+                y=1,
+                xanchor="left",
+                x=1.02
+            )
+        )
+
+    return fig, None
+
+
+# Display Time Series Analysis Section
+if st.session_state.globalData.get('datasetLoaded') and st.session_state.globalData.get('dataset') is not None:
+    df = st.session_state.globalData['dataset']
+
+    # Check if there's any classification data
+    has_bert_ts = len(get_bert_columns(df)) > 0
+    has_detoxify_ts = len(get_detoxify_columns(df)) > 0
+    has_llm_ts = 'llm_classification' in df.columns
+
+    if has_bert_ts or has_detoxify_ts or has_llm_ts:
+        st.markdown("")
+
+        with st.container(border=True):
+            st.markdown("### ⏱️ Time Series Analysis")
+            st.markdown("Visualize how classifications vary over time")
+
+            col1, col2, col3 = st.columns([2, 2, 2])
+
+            with col1:
+                # Select datetime column
+                date_columns = list(df.columns)
+                selected_date_col = st.selectbox(
+                    "📅 Select Date/Time Column",
+                    options=date_columns,
+                    help="Select the column containing date/time information"
+                )
+
+            with col2:
+                # Select classifier type
+                classifier_options = []
+                if has_bert_ts:
+                    classifier_options.append('BERT')
+                if has_detoxify_ts:
+                    classifier_options.append('Detoxify')
+                if has_llm_ts:
+                    classifier_options.append('LLM')
+
+                selected_classifier = st.selectbox(
+                    "🤖 Select Classifier",
+                    options=classifier_options,
+                    help="Choose which classifier to visualize"
+                )
+
+            with col3:
+                # Threshold selector (only for BERT and Detoxify)
+                if selected_classifier in ['BERT', 'Detoxify']:
+                    ts_threshold = st.slider(
+                        "🎚️ Probability Threshold",
+                        min_value=0.0,
+                        max_value=1.0,
+                        value=0.5,
+                        step=0.05,
+                        help="Minimum probability to consider a text as belonging to a class"
+                    )
+                else:
+                    ts_threshold = None
+
+            # Get available classes based on classifier
+            classifier_lower = selected_classifier.lower()
+
+            if classifier_lower == 'bert':
+                prob_cols_dict = get_bert_columns(df)
+                available_classes = list(prob_cols_dict.keys())
+            elif classifier_lower == 'detoxify':
+                prob_cols_dict = get_detoxify_columns(df)
+                available_classes = list(prob_cols_dict.keys())
+            else:  # LLM
+                if 'llm_classification' in df.columns:
+                    available_classes = df['llm_classification'].dropna().unique().tolist()
+                else:
+                    available_classes = []
+
+            if available_classes:
+                # Select classes to display
+                selected_ts_classes = st.multiselect(
+                    "📊 Select Classes to Display",
+                    options=available_classes,
+                    default=available_classes[:3] if len(available_classes) >= 3 else available_classes,
+                    help="Choose which classes to show in the time series"
+                )
+
+                if selected_ts_classes and selected_date_col:
+                    # Create and display chart
+                    fig, error = create_time_series_chart(
+                        df=df,
+                        datetime_col=selected_date_col,
+                        classifier_type=classifier_lower,
+                        threshold=ts_threshold if ts_threshold is not None else 0.5,
+                        selected_classes=selected_ts_classes
+                    )
+
+                    if fig is not None:
+                        st.plotly_chart(fig, use_container_width=True)
+                    else:
+                        st.error(f"❌ {error}")
+                else:
+                    st.info("ℹ️ Please select at least one class to display the time series.")
+            else:
+                st.warning(f"⚠️ No classes found for {selected_classifier} classifier.")
 

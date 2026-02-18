@@ -130,7 +130,7 @@ def render_navigation(current_page):
     # Show configuration status (reactive check)
     config_status = get_configuration_status()
     if config_status['complete']:
-        st.sidebar.markdown("<p style='text-align: center; font-size: 12px; color: #0f9960;'>✅ Ready to classify</p>", unsafe_allow_html=True)
+        st.sidebar.markdown("<p style='text-align: center; font-size: 12px; color: #0f9960;'>✅ Dataset loaded</p>", unsafe_allow_html=True)
     elif config_status['dataset_loaded']:
         st.sidebar.markdown("<p style='text-align: center; font-size: 12px; color: #ffa500;'>⚠️ Configuration pending</p>", unsafe_allow_html=True)
     else:
