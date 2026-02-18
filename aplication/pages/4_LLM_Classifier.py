@@ -6,6 +6,7 @@ import streamlit as st
 import pandas as pd
 import os
 from datetime import datetime
+from io import BytesIO
 
 from components.navigation import render_navigation, is_configuration_complete, get_configuration_status
 from components.llm_classifier import (
@@ -655,9 +656,40 @@ with st.container(border=True):
         st.markdown("**Classified Dataset Preview:**")
         st.dataframe(results_df.head(20), use_container_width=True)
 
-        # Show file location
+        # Download button
         output_format = st.session_state.globalData['outputFormat']
         output_filename = st.session_state.globalData['outputFileName']
-        output_directory = st.session_state.globalData['outputDirectory']
-        full_path = os.path.join(output_directory, f"{output_filename}.{output_format}")
-        st.info(f"💡 File saved at: `{full_path}`")
+        
+        st.markdown("---")
+        st.markdown("#### 💾 Download Classified Dataset")
+        
+        # Convert DataFrame to bytes based on format
+        if output_format == 'csv':
+            file_data = results_df.to_csv(index=False).encode('utf-8')
+            mime_type = 'text/csv'
+        elif output_format == 'xlsx':
+            buffer = BytesIO()
+            results_df.to_excel(buffer, index=False, engine='openpyxl')
+            file_data = buffer.getvalue()
+            mime_type = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        elif output_format == 'json':
+            file_data = results_df.to_json(orient='records', indent=2).encode('utf-8')
+            mime_type = 'application/json'
+        elif output_format == 'parquet':
+            buffer = BytesIO()
+            results_df.to_parquet(buffer, index=False)
+            file_data = buffer.getvalue()
+            mime_type = 'application/octet-stream'
+        else:
+            file_data = results_df.to_csv(index=False).encode('utf-8')
+            mime_type = 'text/csv'
+            output_format = 'csv'
+        
+        st.download_button(
+            label=f"📥 Download {output_filename}.{output_format}",
+            data=file_data,
+            file_name=f"{output_filename}.{output_format}",
+            mime=mime_type,
+            use_container_width=True,
+            type="primary"
+        )
