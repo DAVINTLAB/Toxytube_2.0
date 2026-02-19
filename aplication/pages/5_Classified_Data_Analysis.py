@@ -324,8 +324,8 @@ def detect_reply_count_column(df):
 
 def get_probability_value_color(value):
     """
-    Get background color for probability value (red to green gradient).
-    Low probability = red, High probability = green.
+    Get background color for probability value (light blue to dark blue gradient).
+    Low probability = light blue, High probability = dark blue.
     """
     if pd.isna(value):
         return 'background-color: #f0f0f0'
@@ -333,21 +333,18 @@ def get_probability_value_color(value):
     # Clamp value between 0 and 1
     value = max(0, min(1, float(value)))
 
-    # Red (low) to Yellow (medium) to Green (high)
-    if value <= 0.5:
-        # Red to Yellow (0 to 0.5)
-        ratio = value * 2  # 0 to 1
-        r = int(231 + (255 - 231) * ratio)  # 231 to 255
-        g = int(76 + (193 - 76) * ratio)   # 76 to 193
-        b = int(60 - (60 - 7) * ratio)     # 60 to 7
-    else:
-        # Yellow to Green (0.5 to 1)
-        ratio = (value - 0.5) * 2  # 0 to 1
-        r = int(255 - (255 - 46) * ratio)  # 255 to 46
-        g = int(193 + (204 - 193) * ratio) # 193 to 204
-        b = int(7 + (113 - 7) * ratio)     # 7 to 113
+    # Light blue (low) to Dark blue (high)
+    # Light blue: #e3f2fd (227, 242, 253)
+    # Dark blue: #0d47a1 (13, 71, 161)
 
-    return f'background-color: rgba({r}, {g}, {b}, 0.7); color: black'
+    r = int(227 - (227 - 13) * value)   # 227 to 13
+    g = int(242 - (242 - 71) * value)   # 242 to 71
+    b = int(253 - (253 - 161) * value)  # 253 to 161
+
+    # Use white text for darker blues (value > 0.5)
+    text_color = 'white' if value > 0.5 else 'black'
+
+    return f'background-color: rgba({r}, {g}, {b}, 0.85); color: {text_color}'
 
 def style_probability_columns(df, prob_columns):
     """
