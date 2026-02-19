@@ -9,6 +9,7 @@ from datetime import datetime
 import pathlib
 import re
 import sys
+from io import BytesIO
 
 # Add parent directory to path to import components
 
@@ -398,18 +399,14 @@ with st.container(border=True):
     outputDirectory = str(pathlib.Path.home() / "Downloads")
     st.session_state.youtubeTask['outputDirectory'] = outputDirectory
 
-    # Generate default file name from video title
-    video_title = st.session_state.youtubeTask.get('videoTitle', '')
-    if video_title:
-        sanitized_title = sanitize_filename(video_title)
-        defaultFileName = f"{sanitized_title}__comments"
-    else:
-        defaultFileName = f"comments_{st.session_state.youtubeTask.get('videoId', 'unknown')}_{datetime.now().strftime('%d-%m-%Y')}"
+    # Generate default file name from video ID
+    video_id = st.session_state.youtubeTask.get('videoId', 'unknown')
+    defaultFileName = f"youtube_comments_{video_id}"
 
-    # Auto-update filename when video title is available
+    # Auto-update filename when video ID is available
     current_filename = st.session_state.youtubeTask.get('outputFileName', '')
-    if video_title and (not current_filename or current_filename.startswith('comments_')):
-        # Update to use video title if we have it and current name is generic
+    if not current_filename or current_filename.startswith(('comments_', 'youtube_comments_')):
+        # Update to use video ID if current name is empty or generic
         st.session_state.youtubeTask['outputFileName'] = defaultFileName
 
     # Create two columns for file name and format
@@ -440,9 +437,7 @@ with st.container(border=True):
 
     # Show preview of full file name and path
     if outputFileName.strip():
-        fullFileName = f"{outputFileName.strip()}.{outputFormat}"
-        full_path = os.path.join(outputDirectory, fullFileName)
-        st.info(f"💡 **File will be saved to**: {full_path}")
+        st.info(f"💡 **File will be saved in downloads**")
 
     # Check if configuration is complete
     if not outputFileName.strip():
@@ -698,5 +693,86 @@ with st.container(border=True):
                     st.dataframe(sampleDf[['author', 'comment_text', 'published_at', 'like_count']], use_container_width=True)
                 except Exception as e:
                     st.error(f"❌ Error loading sample: {str(e)}")
+
+                # Download button section
+                st.markdown("---")
+                st.markdown("#### 💾 Download Collected Comments")
+
+                # Get output format and filename
+                output_format = outputFormat
+                output_filename = outputFileName.strip()
+
+                # Convert DataFrame to bytes based on format
+                try:
+                    if output_format == 'csv':
+                        file_data = sampleDf.to_csv(index=False).encode('utf-8')
+                        mime_type = 'text/csv'
+                    elif output_format == 'xlsx':
+                        buffer = BytesIO()
+                        # Load full dataframe for download
+                        if fileExtension == 'xlsx':
+                            full_df = pd.read_excel(filePath)
+                        elif fileExtension == 'csv':
+                            full_df = pd.read_csv(filePath)
+                        elif fileExtension == 'json':
+                            full_df = pd.read_json(filePath)
+                        elif fileExtension == 'parquet':
+                            full_df = pd.read_parquet(filePath)
+                        else:
+                            full_df = pd.read_csv(filePath)
+
+                        full_df.to_excel(buffer, index=False, engine='openpyxl')
+                        file_data = buffer.getvalue()
+                        mime_type = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+                    elif output_format == 'json':
+                        if fileExtension == 'json':
+                            full_df = pd.read_json(filePath)
+                        elif fileExtension == 'csv':
+                            full_df = pd.read_csv(filePath)
+                        elif fileExtension == 'xlsx':
+                            full_df = pd.read_excel(filePath)
+                        elif fileExtension == 'parquet':
+                            full_df = pd.read_parquet(filePath)
+                        else:
+                            full_df = pd.read_csv(filePath)
+
+                        file_data = full_df.to_json(orient='records', indent=2).encode('utf-8')
+                        mime_type = 'application/json'
+                    elif output_format == 'parquet':
+                        if fileExtension == 'parquet':
+                            full_df = pd.read_parquet(filePath)
+                        elif fileExtension == 'csv':
+                            full_df = pd.read_csv(filePath)
+                        elif fileExtension == 'xlsx':
+                            full_df = pd.read_excel(filePath)
+                        elif fileExtension == 'json':
+                            full_df = pd.read_json(filePath)
+                        else:
+                            full_df = pd.read_csv(filePath)
+
+                        buffer = BytesIO()
+                        full_df.to_parquet(buffer, index=False)
+                        file_data = buffer.getvalue()
+                        mime_type = 'application/octet-stream'
+                    else:
+                        # Fallback to CSV
+                        if fileExtension == 'csv':
+                            full_df = pd.read_csv(filePath)
+                        else:
+                            full_df = pd.read_excel(filePath) if fileExtension == 'xlsx' else pd.read_json(filePath)
+                        file_data = full_df.to_csv(index=False).encode('utf-8')
+                        mime_type = 'text/csv'
+                        output_format = 'csv'
+
+                    st.download_button(
+                        label=f"📥 Download {output_filename}.{output_format}",
+                        data=file_data,
+                        file_name=f"{output_filename}.{output_format}",
+                        mime=mime_type,
+                        use_container_width=True,
+                        type="primary"
+                    )
+                except Exception as e:
+                    st.error(f"❌ Error preparing download: {str(e)}")
         else:
             st.error(f"❌ Collection failed: {results['error']}")
