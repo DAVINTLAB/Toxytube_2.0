@@ -513,18 +513,25 @@ with st.container(border=True):
         fileName = f"{outputFileName.strip()}.{outputFormat}"
         outputFilePath = os.path.join(outputDirectory, fileName)
 
-        # Create terminal output
-        st.markdown("#### 💻 Collection Terminal")
-        terminalOutput = st.empty()
+        # Create progress UI (single progress bar + plain text below)
+        st.markdown("#### 💻 Collection Progress")
+        progress_bar = st.progress(0)
+        progress_text = st.empty()
 
-        # Initialize terminal messages
-        terminalMessages = ["⏳ Initializing API connection..."]
-        terminalOutput.code("\n".join(terminalMessages), language=None)
+        # Initialize progress status (plain text, no colored background)
+        progress_text.markdown("⏳ Initializing API connection...")
 
-        # Progress callback to update terminal
+        # Progress callback to update progress bar and plain text
         def progressCallback(message, count):
-            terminalMessages.append(message)
-            terminalOutput.code("\n".join(terminalMessages), language="bash")
+            try:
+                total = max(1, int(maxComments))
+            except Exception:
+                total = 1
+
+            collected = int(count)
+            percent = min(100, int((collected / total) * 100))
+            progress_bar.progress(percent)
+            progress_text.markdown(f"{collected:,} of {total:,} comments collected ({percent}% ) - {message}")
 
         # Collect comments using backend function
         collectionResult = collectComments(
@@ -542,8 +549,7 @@ with st.container(border=True):
             videoStats = collectionResult['videoStats']
 
             # Save comments to file
-            terminalMessages.append(f"💾 Salvando comentários em {outputFormat.upper()}...")
-            terminalOutput.code("\n".join(terminalMessages), language="bash")
+            progress_text.markdown(f"💾 Salvando comentários em {outputFormat.upper()}...")
 
             saveResult = saveCommentsToFile(comments, outputFilePath, outputFormat)
 
@@ -553,11 +559,9 @@ with st.container(border=True):
 
                 # Handle format fallback
                 if 'fallbackFormat' in saveResult:
-                    terminalMessages.append(f"⚠️ Salvando como {saveResult['fallbackFormat'].upper()} (formato original não suportado)...")
-                    terminalOutput.code("\n".join(terminalMessages), language="bash")
+                    progress_text.markdown(f"⚠️ Salvando como {saveResult['fallbackFormat'].upper()} (formato original não suportado)...")
 
-                finalMessages = terminalMessages + [
-                    "",
+                finalMessages = [
                     "=" * 50,
                     "✅ COLETA DE COMENTÁRIOS CONCLUÍDA!",
                     f"📁 Arquivo salvo: {actualPath}",
@@ -576,11 +580,7 @@ with st.container(border=True):
                     'videoStats': videoStats
                 }
             else:
-                finalMessages = terminalMessages + [
-                    "",
-                    "❌ ERRO AO SALVAR ARQUIVO:",
-                    saveResult['error']
-                ]
+                finalMessages = ["❌ ERRO AO SALVAR ARQUIVO:", saveResult['error']]
                 st.session_state.youtubeTask['collectionResults'] = {
                     'success': False,
                     'error': saveResult['error']
@@ -591,40 +591,23 @@ with st.container(border=True):
             error = collectionResult['error']
 
             if errorType == 'import':
-                finalMessages = terminalMessages + [
-                    "",
+                finalMessages = [
                     "❌ MISSING DEPENDENCIES:",
                     error,
-                    "",
                     "💡 Install with: pip install google-api-python-client"
                 ]
                 st.error("❌ Missing Dependencies")
                 st.code("pip install google-api-python-client", language="bash")
             elif errorType == 'quota':
-                finalMessages = terminalMessages + [
-                    "",
-                    "❌ API QUOTA EXCEEDED:",
-                    error
-                ]
+                finalMessages = ["❌ API QUOTA EXCEEDED:", error]
             elif errorType == 'notfound':
-                finalMessages = terminalMessages + [
-                    "",
-                    "❌ VIDEO NOT FOUND:",
-                    error,
-                    "Please check the URL and try again"
-                ]
+                finalMessages = ["❌ VIDEO NOT FOUND:", error, "Please check the URL and try again"]
             elif errorType == 'disabled':
-                finalMessages = terminalMessages + [
-                    "",
-                    "⚠️ NO COMMENTS COLLECTED",
-                    error
-                ]
+                finalMessages = ["⚠️ NO COMMENTS COLLECTED", error]
             else:
-                finalMessages = terminalMessages + [
-                    "",
+                finalMessages = [
                     "❌ COLLECTION ERROR:",
                     error,
-                    "",
                     "💡 Common issues:",
                     "- Invalid API key",
                     "- Video with disabled comments",
@@ -637,8 +620,11 @@ with st.container(border=True):
                 'error': error
             }
 
-        # Update final terminal display
-        terminalOutput.code("\n".join(finalMessages), language="bash")
+        # Show final messages in progress area (plain text)
+        try:
+            progress_text.markdown('\n\n'.join(finalMessages))
+        except Exception:
+            pass
 
         # Update execution state
         st.session_state.youtubeTask['isExecuting'] = False
