@@ -184,9 +184,12 @@ with st.container(border=True):
     col1, col2 = st.columns([3, 1])
 
     with col1:
+        # Default model id (prefill) unless user/session already has one
+        default_model_id = st.session_state.classificationData.get('modelId') or "cardiffnlp/twitter-xlm-roberta-base-sentiment"
+
         model_id_input = st.text_input(
             "Hugging Face BERT Model ID:",
-            value=st.session_state.classificationData.get('modelId', ''),
+            value=default_model_id,
             placeholder="Ex: neuralmind/bert-base-portuguese-cased",
             help="Enter the complete model ID of any BERT-based classifier (user/model-name)"
         )

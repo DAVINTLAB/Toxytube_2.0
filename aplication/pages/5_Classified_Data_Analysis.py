@@ -43,6 +43,17 @@ if 'analysisState' not in st.session_state:
         'llm_confidence_filter': ['high', 'medium', 'low']
     }
 
+# Shared palette and sentiment mapping for donuts across the page
+# We keep a persistent mapping so the same label gets the same color across charts
+default_palette = px.colors.qualitative.Set3 + px.colors.qualitative.Pastel1 + px.colors.qualitative.Dark24
+_label_color_map = {}
+_color_idx = {'i': 0}
+sentiment_color_map = {
+    'positive': '#2ecc71',  # green
+    'negative': '#e74c3c',  # red
+    'neutral': '#f1c40f'    # yellow
+}
+
 # =============================================================================
 # Page Configuration
 # =============================================================================
@@ -130,7 +141,19 @@ def create_threshold_chart(df, prob_columns, title, height=350):
             count = (df[col] >= threshold).sum()
             counts_at_threshold.append(count)
 
-        color = colors[idx % len(colors)]
+        # Choose color: prefer sentiment overrides for common labels
+        key = str(label).strip()
+        low = key.lower()
+        if low in sentiment_color_map:
+            color = sentiment_color_map[low]
+            _label_color_map[key] = sentiment_color_map[low]
+        else:
+            # Reuse persistent mapping when available, otherwise pick next palette color
+            if key in _label_color_map:
+                color = _label_color_map[key]
+            else:
+                color = colors[idx % len(colors)]
+                _label_color_map[key] = color
         fig.add_trace(go.Scatter(
             x=thresholds,
             y=counts_at_threshold,
@@ -169,13 +192,29 @@ def create_confidence_donut(df, llm_cols, title, height=350):
 
     confidence_counts = df[llm_cols['confidence']].value_counts()
 
-    # Define colors for confidence levels
+    # Default colors for confidence levels (fallback)
     color_map = {
         'high': '#2ecc71',
         'medium': '#f39c12',
         'low': '#e74c3c'
     }
-    colors = [color_map.get(str(c).lower(), '#95a5a6') for c in confidence_counts.index]
+
+    # Blue palette to match probability styling used in the top comments table
+    blue_map = {
+        'low': '#e3f2fd',    # light blue
+        'medium': '#64b5f6', # medium blue
+        'high': '#0d47a1'    # dark blue
+    }
+
+    # If the confidence levels are the common set (low/medium/high), prefer the blue palette
+    idxs = [str(c).lower() for c in confidence_counts.index]
+    if set(idxs).issubset({'low', 'medium', 'high'}):
+        colors = [blue_map.get(str(c).lower(), '#95a5a6') for c in confidence_counts.index]
+        # persist mapping for consistency across charts
+        for lbl, col in zip(confidence_counts.index, colors):
+            _label_color_map[str(lbl).strip()] = col
+    else:
+        colors = [color_map.get(str(c).lower(), '#95a5a6') for c in confidence_counts.index]
 
     fig = go.Figure(data=[go.Pie(
         labels=confidence_counts.index,
@@ -220,7 +259,22 @@ def create_class_distribution_donut(df, prob_columns, threshold, title, height=3
     labels = list(class_counts.keys())
     values = list(class_counts.values())
 
-    colors = px.colors.qualitative.Set3[:len(labels)]
+    # Build colors using shared palette and sentiment overrides
+    colors = []
+    for lbl in labels:
+        key = str(lbl).strip()
+        low = key.lower()
+        if low in sentiment_color_map:
+            colors.append(sentiment_color_map[low])
+            _label_color_map[key] = sentiment_color_map[low]
+        else:
+            if key in _label_color_map:
+                colors.append(_label_color_map[key])
+            else:
+                c = default_palette[_color_idx['i'] % len(default_palette)]
+                _label_color_map[key] = c
+                colors.append(c)
+                _color_idx['i'] += 1
 
     fig = go.Figure(data=[go.Pie(
         labels=labels,
@@ -274,7 +328,23 @@ def create_llm_class_distribution_donut(df, llm_cols, confidence_filter, title, 
 
     class_counts = filtered_df[llm_cols['classification']].value_counts()
 
-    colors = px.colors.qualitative.Set3[:len(class_counts)]
+    # Build colors using shared palette and sentiment overrides
+    labels = list(class_counts.index.astype(str))
+    colors = []
+    for lbl in labels:
+        key = str(lbl).strip()
+        low = key.lower()
+        if low in sentiment_color_map:
+            colors.append(sentiment_color_map[low])
+            _label_color_map[key] = sentiment_color_map[low]
+        else:
+            if key in _label_color_map:
+                colors.append(_label_color_map[key])
+            else:
+                c = default_palette[_color_idx['i'] % len(default_palette)]
+                _label_color_map[key] = c
+                colors.append(c)
+                _color_idx['i'] += 1
 
     fig = go.Figure(data=[go.Pie(
         labels=class_counts.index,
@@ -468,6 +538,115 @@ def create_top_comments_table(df, text_column, likes_col, author_col, reply_col,
     df_display = df_display.reset_index(drop=True)
 
     return df_display, prob_columns, separator_cols
+
+
+def create_bert_llm_agreement_table(df, text_column, likes_col, author_col, reply_col, bert_cols, detoxify_cols, llm_cols, sort_by='likes', top_n=20):
+    """
+    Create a table containing comments where BERT's final class (argmax over bert_prob_ columns)
+    matches the LLM classification.
+
+    Returns a dataframe with columns: likes, replies, author, text, bert_final, llm_classification
+    """
+    # Ensure required columns exist
+    if not bert_cols or 'classification' not in llm_cols or llm_cols['classification'] not in df.columns:
+        return None, "No BERT or LLM classification columns available."
+
+    # Only consider bert probability columns that exist in df
+    available_bert_cols = {label: col for label, col in bert_cols.items() if col in df.columns}
+    if not available_bert_cols:
+        return None, "No BERT probability columns found in the dataset."
+
+    # Reverse mapping col -> label
+    col_to_label = {col: label for label, col in available_bert_cols.items()}
+
+    df_work = df.copy()
+
+    # Compute BERT final class (label with highest probability)
+    def _bert_final(row):
+        best_col = None
+        best_val = -float('inf')
+        for col in col_to_label:
+            try:
+                v = row[col]
+                if pd.isna(v):
+                    continue
+                if float(v) > best_val:
+                    best_val = float(v)
+                    best_col = col
+            except Exception:
+                continue
+        return col_to_label.get(best_col) if best_col else None
+
+    df_work['bert_final'] = df_work.apply(_bert_final, axis=1)
+
+    # Build display columns
+    display_cols = []
+    rename_map = {}
+
+    if likes_col and likes_col in df_work.columns:
+        display_cols.append(likes_col)
+        rename_map[likes_col] = '👍 Likes'
+
+    if reply_col and reply_col in df_work.columns:
+        display_cols.append(reply_col)
+        rename_map[reply_col] = '💬 Replies'
+
+    if author_col and author_col in df_work.columns:
+        display_cols.append(author_col)
+        rename_map[author_col] = '👤 Author'
+
+    if text_column and text_column in df_work.columns:
+        display_cols.append(text_column)
+        rename_map[text_column] = '📝 Comment'
+
+    # Add computed BERT final and LLM classification columns side-by-side
+    display_cols.append('bert_final')
+    display_cols.append(llm_cols['classification'])
+    rename_map['bert_final'] = '🤖 BERT Final'
+    rename_map[llm_cols['classification']] = '🧠 LLM Class'
+
+    # Add Detoxify probability columns (if provided) after BERT and LLM
+    if detoxify_cols:
+        for label, col in detoxify_cols.items():
+            if col in df_work.columns:
+                display_cols.append(col)
+                rename_map[col] = f'🛡️ {label}'
+
+    # Filter to existing
+    display_cols = [c for c in display_cols if c in df_work.columns]
+
+    df_table = df_work[display_cols].copy()
+    df_table = df_table.rename(columns=rename_map)
+
+    # Filter rows where bert_final equals llm classification (case-insensitive)
+    bert_col_name = '🤖 BERT Final'
+    llm_col_name = '🧠 LLM Class'
+
+    if bert_col_name not in df_table.columns or llm_col_name not in df_table.columns:
+        return None, 'Required columns not present after processing.'
+
+    mask = (
+        df_table[bert_col_name].notna()
+    ) & (
+        df_table[llm_col_name].notna()
+    ) & (
+        df_table[bert_col_name].astype(str).str.lower() == df_table[llm_col_name].astype(str).str.lower()
+    )
+
+    df_agree = df_table[mask].copy()
+
+    if df_agree.empty:
+        return pd.DataFrame(columns=rename_map.values()), None
+
+    # Sorting
+    if sort_by == 'likes' and '👍 Likes' in df_agree.columns:
+        df_agree = df_agree.sort_values(by='👍 Likes', ascending=False)
+    elif sort_by == 'replies' and '💬 Replies' in df_agree.columns:
+        df_agree = df_agree.sort_values(by='💬 Replies', ascending=False)
+
+    df_agree = df_agree.head(top_n).reset_index(drop=True)
+
+    return df_agree, None
 
 # =============================================================================
 # Main Content
@@ -854,10 +1033,68 @@ if config_status['complete']:
                         for sep_col in separator_cols:
                             if sep_col in df_display.columns:
                                 column_config[sep_col] = st.column_config.TextColumn(
-                                    '│',
+                                    '------------',
                                     width='small',
                                     help='Separador'
                                 )
+
+                        # Apply styling for LLM Confidence column (blue palette for low/medium/high)
+                        if '🧠 Confidence' in df_display.columns:
+                            blue_map = {
+                                'low': '#e3f2fd',
+                                'medium': '#64b5f6',
+                                'high': '#0d47a1'
+                            }
+
+                            def _conf_style(v):
+                                if pd.isna(v):
+                                    return ''
+                                key = str(v).strip().lower()
+                                col = blue_map.get(key)
+                                if not col:
+                                    return ''
+                                text = 'white' if key == 'high' else 'black'
+                                # persist mapping
+                                _label_color_map[str(v).strip()] = col
+                                return f'background-color: {col}; color: {text}'
+
+                            styled_df = styled_df.applymap(_conf_style, subset=['🧠 Confidence'])
+
+                        # Apply styling for LLM Class column (use sentiment overrides or persistent palette)
+                        if '🧠 LLM Class' in df_display.columns:
+                            def _llm_class_style(v):
+                                if pd.isna(v):
+                                    return ''
+                                key = str(v).strip()
+                                low = key.lower()
+                                # Sentiment overrides
+                                if low in sentiment_color_map:
+                                    col = sentiment_color_map[low]
+                                    text = 'white' if low in ('positive', 'negative') else 'black'
+                                    _label_color_map[key] = col
+                                    return f'background-color: {col}; color: {text}'
+
+                                # Persistent mapping or assign new from default palette
+                                if key in _label_color_map:
+                                    col = _label_color_map[key]
+                                else:
+                                    col = default_palette[_color_idx['i'] % len(default_palette)]
+                                    _label_color_map[key] = col
+                                    _color_idx['i'] += 1
+
+                                # Determine readable text color based on luminance
+                                try:
+                                    r = int(col[1:3], 16)
+                                    g = int(col[3:5], 16)
+                                    b = int(col[5:7], 16)
+                                    lum = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255
+                                    text = 'white' if lum < 0.6 else 'black'
+                                except Exception:
+                                    text = 'black'
+
+                                return f'background-color: {col}; color: {text}'
+
+                            styled_df = styled_df.applymap(_llm_class_style, subset=['🧠 LLM Class'])
 
                         st.dataframe(
                             styled_df,
@@ -875,6 +1112,270 @@ if config_status['complete']:
                         )
                 else:
                     st.error("Error creating the table.")
+
+
+
+        # =============================================================================
+        # Agreement: BERT vs LLM Section
+        # =============================================================================
+
+        st.markdown("")
+
+        with st.container(border=True):
+            st.markdown("### 🤝 BERT & LLM Agreement")
+            st.markdown("Show comments where BERT's final class (argmax) matches the LLM classification.")
+
+            # Use same detection as before
+            likes_col = detect_likes_column(dataset)
+            reply_col = detect_reply_count_column(dataset)
+            author_col = detect_author_column(dataset)
+            text_column = st.session_state.globalData['textColumn']
+
+            # Compute agreement over full dataset for metrics and donuts
+            try:
+                df_agree_full, agree_err_full = create_bert_llm_agreement_table(
+                    dataset,
+                    text_column,
+                    likes_col,
+                    author_col,
+                    reply_col,
+                    bert_cols,
+                    detoxify_cols,
+                    llm_cols,
+                    sort_by='likes',
+                    top_n=len(dataset)
+                )
+
+                if agree_err_full:
+                    agreement_pct = None
+                    total_agree = 0
+                else:
+                    total_rows = len(dataset) if dataset is not None else 0
+                    total_agree = len(df_agree_full) if df_agree_full is not None else 0
+                    agreement_pct = (total_agree / total_rows * 100) if total_rows > 0 else 0.0
+            except Exception:
+                agreement_pct = None
+                total_agree = 0
+
+            # --- Class distribution donuts (two donuts: LLM and BERT) ---
+            try:
+                # Agreement counts per class (where BERT == LLM)
+                agree_counts = None
+                if df_agree_full is not None and not df_agree_full.empty:
+                    agree_counts = df_agree_full['🤖 BERT Final'].dropna().astype(str).value_counts()
+
+                # LLM class distribution (all dataset)
+                llm_counts = None
+                if 'classification' in llm_cols and llm_cols['classification'] in dataset.columns:
+                    llm_counts = dataset[llm_cols['classification']].dropna().astype(str).value_counts()
+
+                # BERT class distribution (compute final class for all rows)
+                bert_counts = None
+                bert_prob_cols = [col for col in bert_cols.values() if col in dataset.columns]
+                if bert_prob_cols:
+                    # map column name to label
+                    col_to_label = {col: label for label, col in bert_cols.items() if col in dataset.columns}
+                    # idxmax returns the column name with highest value per row
+                    try:
+                        bert_argmax_cols = dataset[bert_prob_cols].idxmax(axis=1)
+                        bert_final_all = bert_argmax_cols.map(lambda c: col_to_label.get(c) if c in col_to_label else None)
+                        bert_counts = bert_final_all.dropna().astype(str).value_counts()
+                    except Exception:
+                        bert_counts = None
+
+                # Render two donuts side-by-side (LLM, BERT) — Agreement-by-Class donut removed
+                try:
+                    if (llm_counts is not None and not llm_counts.empty) or (bert_counts is not None and not bert_counts.empty):
+                        col_left, col_right = st.columns(2)
+
+                        def _make_donut(counts, title, col):
+                            if counts is None or counts.empty:
+                                with col:
+                                    st.info(f"No data for {title}")
+                                return
+                            labels = counts.index.tolist()
+                            values = counts.values.tolist()
+
+                            # Build colors using global maps defined at module level if present
+                            colors = []
+                            for lbl in labels:
+                                key = str(lbl).strip()
+                                low = key.lower()
+                                if low in sentiment_color_map:
+                                    colors.append(sentiment_color_map[low])
+                                else:
+                                    if key in _label_color_map:
+                                        colors.append(_label_color_map[key])
+                                    else:
+                                        c = default_palette[_color_idx['i'] % len(default_palette)]
+                                        _label_color_map[key] = c
+                                        colors.append(c)
+                                        _color_idx['i'] += 1
+
+                            fig = go.Figure(data=[go.Pie(labels=labels, values=values, hole=0.5, marker=dict(colors=colors), textinfo='percent+label')])
+                            fig.update_layout(title=title, height=320, margin=dict(l=10, r=10, t=30, b=10), showlegend=False)
+                            with col:
+                                st.plotly_chart(fig, use_container_width=True)
+
+                        _make_donut(llm_counts, 'LLM Class Distribution', col_left)
+                        _make_donut(bert_counts, 'BERT Class Distribution', col_right)
+                except Exception:
+                    pass
+            except Exception:
+                pass
+
+            # --- Controls: Agreement metric, Show Top, Sort By, Class filter (placed BELOW the donuts) ---
+            col_a, col_b, col_c, col_d = st.columns([1, 1, 1, 1])
+
+            with col_a:
+                # Show agreement as percentage and absolute counts
+                if agreement_pct is None:
+                    st.metric("Agreement", "N/A")
+                else:
+                    total_rows = len(dataset) if dataset is not None else 0
+                    st.metric("Agreement", f"{agreement_pct:.2f}% ({total_agree:,}/{total_rows:,})")
+
+            with col_b:
+                agree_top_n = st.selectbox(
+                    "Show top:",
+                    options=[10, 20, 50, 100],
+                    index=1,
+                    key="agree_top_n"
+                )
+
+            with col_c:
+                agree_sort_options = []
+                if likes_col:
+                    agree_sort_options.append('Likes')
+                if reply_col:
+                    agree_sort_options.append('Replies')
+
+                if len(agree_sort_options) > 0:
+                    agree_sort_choice = st.selectbox(
+                        "Sort by:",
+                        options=agree_sort_options,
+                        index=0,
+                        key="agree_sort_by"
+                    )
+                    agree_sort_by = 'likes' if agree_sort_choice == 'Likes' else 'replies'
+                else:
+                    agree_sort_by = 'likes'
+
+            with col_d:
+                # Class filter for the agreement table
+                class_options = ['All']
+                if df_agree_full is not None and not df_agree_full.empty:
+                    classes = df_agree_full['🤖 BERT Final'].dropna().astype(str).unique().tolist()
+                    class_options += sorted(classes)
+                selected_agree_class = st.selectbox('Filter class:', options=class_options, index=0, key='agree_class_filter')
+
+            # Create the agreement table using the chosen top_n and sort_by
+            df_agree, agree_error = create_bert_llm_agreement_table(
+                dataset,
+                text_column,
+                likes_col,
+                author_col,
+                reply_col,
+                bert_cols,
+                detoxify_cols,
+                llm_cols,
+                sort_by=agree_sort_by,
+                top_n=agree_top_n
+            )
+
+            if agree_error:
+                st.warning(f"⚠️ {agree_error}")
+            else:
+                if df_agree is None or df_agree.empty:
+                    st.info("No comments where BERT final class matches LLM classification were found.")
+                else:
+                    # Apply class filter if selected
+                    if selected_agree_class and selected_agree_class != 'All':
+                        if '🤖 BERT Final' in df_agree.columns:
+                            df_agree = df_agree[df_agree['🤖 BERT Final'].astype(str) == selected_agree_class]
+
+                    # Display simple table
+                    st.markdown("**Comments with agreement (sample):**")
+
+                    # Apply heatmap styling to Detoxify probability columns (if present)
+                    detox_prob_cols = [col for col in df_agree.columns if col.startswith('🛡️ ')]
+
+                    if detox_prob_cols:
+                        # Formatting for numeric detox columns
+                        format_dict = {col: '{:.3f}' for col in detox_prob_cols if col in df_agree.columns}
+
+                        # Prepare style DataFrame (same shape) to apply a single unified styling pass.
+                        styles_df = pd.DataFrame('', index=df_agree.index, columns=df_agree.columns)
+
+                        # Blue heatmap for Detoxify probability columns
+                        for col in detox_prob_cols:
+                            if col in df_agree.columns:
+                                # apply color per cell using get_probability_value_color
+                                for idx, val in df_agree[col].items():
+                                    try:
+                                        if isinstance(val, (int, float)) and 0 <= val <= 1:
+                                            styles_df.at[idx, col] = get_probability_value_color(val)
+                                        else:
+                                            styles_df.at[idx, col] = ''
+                                    except Exception:
+                                        styles_df.at[idx, col] = ''
+
+                        # Detect sentiment labels (case-insensitive) in BERT and LLM columns
+                        bert_col = '🤖 BERT Final'
+                        llm_col = '🧠 LLM Class'
+                        sentiment_vals = {'negative', 'neutral', 'positive'}
+
+                        try:
+                            bert_vals = set(v.lower() for v in df_agree[bert_col].dropna().astype(str).unique()) if bert_col in df_agree.columns else set()
+                        except Exception:
+                            bert_vals = set()
+                        try:
+                            llm_vals = set(v.lower() for v in df_agree[llm_col].dropna().astype(str).unique()) if llm_col in df_agree.columns else set()
+                        except Exception:
+                            llm_vals = set()
+
+                        # Decide if sentiment coloring should be applied (if either column contains sentiment labels)
+                        apply_sentiment = (bert_vals and bert_vals.issubset(sentiment_vals)) or (llm_vals and llm_vals.issubset(sentiment_vals))
+
+                        sentiment_color_map = {
+                            'negative': 'background-color: #e74c3c; color: white',
+                            'neutral':  'background-color: #f1c40f; color: black',
+                            'positive': 'background-color: #2ecc71; color: white'
+                        }
+
+                        if apply_sentiment:
+                            # Compute per-row sentiment preference: prefer BERT, fallback to LLM
+                            row_sentiments = []
+                            for _, row in df_agree.iterrows():
+                                s = None
+                                if bert_col in df_agree.columns and pd.notna(row.get(bert_col)):
+                                    v = str(row.get(bert_col)).lower()
+                                    if v in sentiment_vals:
+                                        s = v
+                                if s is None and llm_col in df_agree.columns and pd.notna(row.get(llm_col)):
+                                    v = str(row.get(llm_col)).lower()
+                                    if v in sentiment_vals:
+                                        s = v
+                                row_sentiments.append(s)
+
+                            # Apply sentiment color to ALL non-detox cells
+                            non_detox_cols = [c for c in df_agree.columns if c not in detox_prob_cols]
+                            for col in non_detox_cols:
+                                for idx, s in enumerate(row_sentiments):
+                                    if s:
+                                        styles_df.iat[idx, df_agree.columns.get_loc(col)] = sentiment_color_map.get(s, '')
+
+                        # Apply unified styles and formatting
+                        styled_df = df_agree.style.apply(lambda _: styles_df, axis=None).format(format_dict)
+
+                        st.dataframe(
+                            styled_df,
+                            use_container_width=True,
+                            height=min(400 + (agree_top_n * 10), 800),
+                            hide_index=True
+                        )
+                    else:
+                        st.dataframe(df_agree, use_container_width=True, height=min(400 + (agree_top_n * 10), 800), hide_index=True)
 
         # =============================================================================
         # Word Cloud Section
