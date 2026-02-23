@@ -167,17 +167,21 @@ with st.container(border=True):
             out_name = st.session_state.globalData.get('outputFileName') or st.session_state.globalData.get('originalFileName') or 'dataset'
             out_format = (st.session_state.globalData.get('outputFormat') or 'csv').lower()
 
+            full_df = st.session_state.globalData.get('dataset')
+            if full_df is None:
+                full_df = dataset
+
             if out_format == 'csv':
-                dataset.to_csv(buffer, index=False)
+                full_df.to_csv(buffer, index=False)
                 mime = 'text/csv'
             elif out_format == 'xlsx':
-                dataset.to_excel(buffer, index=False, engine='openpyxl')
+                full_df.to_excel(buffer, index=False, engine='openpyxl')
                 mime = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
             elif out_format == 'json':
-                buffer.write(dataset.to_json(orient='records', indent=2).encode('utf-8'))
+                buffer.write(full_df.to_json(orient='records', indent=2).encode('utf-8'))
                 mime = 'application/json'
             elif out_format == 'parquet':
-                dataset.to_parquet(buffer, index=False)
+                full_df.to_parquet(buffer, index=False)
                 mime = 'application/octet-stream'
             else:
                 dataset.to_csv(buffer, index=False)

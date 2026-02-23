@@ -559,15 +559,15 @@ with st.container(border=True):
 
                 # Handle format fallback
                 if 'fallbackFormat' in saveResult:
-                    progress_text.markdown(f"⚠️ Salvando como {saveResult['fallbackFormat'].upper()} (formato original não suportado)...")
+                    progress_text.markdown(f"⚠️ Saving as {saveResult['fallbackFormat'].upper()} (original format not supported)...")
 
                 finalMessages = [
                     "=" * 50,
-                    "✅ COLETA DE COMENTÁRIOS CONCLUÍDA!",
-                    f"📁 Arquivo salvo: {actualPath}",
-                    f"📊 Comentários coletados: {len(comments):,}",
-                    f"💾 Tamanho do arquivo: {fileSize / 1024:.1f} KB",
-                    f"🎥 Vídeo: {videoTitle[:50]}...",
+                    "✅ COMMENT COLLECTION COMPLETED!",
+                    f"📁 File saved: {actualPath}",
+                    f"📊 Comments collected: {len(comments):,}",
+                    f"💾 File size: {fileSize / 1024:.1f} KB",
+                    f"🎥 Video: {videoTitle[:50]}...",
                     "=" * 50
                 ]
 
@@ -690,7 +690,19 @@ with st.container(border=True):
                 # Convert DataFrame to bytes based on format
                 try:
                     if output_format == 'csv':
-                        file_data = sampleDf.to_csv(index=False).encode('utf-8')
+                        # Load full dataframe for CSV download
+                        if fileExtension == 'csv':
+                            full_df = pd.read_csv(filePath)
+                        elif fileExtension == 'xlsx':
+                            full_df = pd.read_excel(filePath)
+                        elif fileExtension == 'json':
+                            full_df = pd.read_json(filePath)
+                        elif fileExtension == 'parquet':
+                            full_df = pd.read_parquet(filePath)
+                        else:
+                            full_df = pd.read_csv(filePath)
+
+                        file_data = full_df.to_csv(index=False).encode('utf-8')
                         mime_type = 'text/csv'
                     elif output_format == 'xlsx':
                         buffer = BytesIO()

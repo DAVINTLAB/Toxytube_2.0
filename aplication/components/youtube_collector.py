@@ -33,7 +33,7 @@ def extractVideoId(url):
 def getVideoInfo(videoId, apiKey):
     """Get video information from YouTube API"""
     if not apiKey.strip():
-        return None, "API key não fornecida"
+        return None, "API key not provided"
 
     try:
         from googleapiclient.discovery import build
@@ -49,17 +49,17 @@ def getVideoInfo(videoId, apiKey):
         ).execute()
 
         if not response['items']:
-            return None, "Vídeo não encontrado"
+            return None, "Video not found"
 
         video = response['items'][0]
         return video, None
 
     except ImportError:
-        return None, "google-api-python-client não instalado"
+        return None, "google-api-python-client not installed"
     except HttpError as e:
-        return None, f"Erro da API: {e.reason}"
+        return None, f"API error: {e.reason}"
     except Exception as e:
-        return None, f"Erro: {str(e)}"
+        return None, f"Error: {str(e)}"
 
 
 # =============================================================================
@@ -139,16 +139,16 @@ def collectComments(videoId, apiKey, maxComments=100, progressCallback=None):
     try:
         # Build YouTube API service
         if progressCallback:
-            progressCallback("🔌 Conectando à API do YouTube...", 0)
-        
+            progressCallback("🔌 Connecting to YouTube API...", 0)
+
         youtube = build('youtube', 'v3', developerKey=apiKey)
 
         if progressCallback:
-            progressCallback("✅ Conectado com sucesso à API do YouTube", 0)
+            progressCallback("✅ Successfully connected to YouTube API", 0)
 
         # Get video info
         if progressCallback:
-            progressCallback("📹 Buscando informações do vídeo...", 0)
+            progressCallback("📹 Fetching video information...", 0)
 
         videoResponse = youtube.videos().list(
             part='snippet,statistics',
@@ -168,12 +168,12 @@ def collectComments(videoId, apiKey, maxComments=100, progressCallback=None):
         commentCount = int(videoStats.get('commentCount', 0))
 
         if progressCallback:
-            progressCallback(f"✅ Vídeo encontrado: {videoTitle[:60]}...", 0)
-            progressCallback(f"💬 Total de comentários disponíveis: {commentCount:,}", 0)
+            progressCallback(f"✅ Video found: {videoTitle[:60]}...", 0)
+            progressCallback(f"💬 Total comments available: {commentCount:,}", 0)
 
         # Collect comments
         if progressCallback:
-            progressCallback("📝 Iniciando coleta de comentários...", 0)
+            progressCallback("📝 Starting comment collection...", 0)
 
         comments = []
         nextPageToken = None
@@ -210,25 +210,21 @@ def collectComments(videoId, apiKey, maxComments=100, progressCallback=None):
                 if collectedCount >= maxComments:
                     break
 
-            # Update progress
+            # Update progress (handled elsewhere)
             if progressCallback:
-                percentage = min((collectedCount / maxComments) * 100, 100)
-                progressCallback(
-                    f"📥 Coletados {collectedCount:,}/{maxComments:,} comentários ({percentage:.1f}%)",
-                    collectedCount
-                )
+                pass
 
             # Check for next page
             nextPageToken = response.get('nextPageToken')
             if not nextPageToken:
                 if progressCallback:
-                    progressCallback("✅ Fim dos comentários disponíveis alcançado", collectedCount)
+                    progressCallback("✅ End of available comments reached", collectedCount)
                 break
 
         if not comments:
             return {
                 'success': False,
-                'error': 'Nenhum comentário encontrado ou comentários estão desabilitados',
+                'error': 'No comments found or comments are disabled',
                 'errorType': 'disabled'
             }
 
@@ -243,17 +239,17 @@ def collectComments(videoId, apiKey, maxComments=100, progressCallback=None):
     except HttpError as e:
         errorType = 'api'
         errorMsg = str(e)
-        
+
         if e.resp.status == 403:
             errorType = 'quota'
-            errorMsg = 'Limite de cota diária alcançado. Tente novamente amanhã ou use uma chave de API diferente'
-        
+            errorMsg = 'Daily quota limit reached. Try again tomorrow or use a different API key'
+
         return {
             'success': False,
             'error': errorMsg,
             'errorType': errorType
         }
-    
+
     except Exception as e:
         return {
             'success': False,
@@ -294,7 +290,7 @@ def saveCommentsToFile(comments, outputFilePath, outputFormat='csv'):
         # Save to selected format
         actualFilePath = outputFilePath
         actualFormat = outputFormat
-        
+
         try:
             if outputFormat == 'csv':
                 df.to_csv(outputFilePath, index=False, encoding='utf-8')
@@ -319,16 +315,16 @@ def saveCommentsToFile(comments, outputFilePath, outputFormat='csv'):
         # Verify file was created
         if os.path.exists(actualFilePath):
             fileSize = os.path.getsize(actualFilePath)
-            
+
             result = {
                 'success': True,
                 'filePath': actualFilePath,
                 'fileSize': fileSize
             }
-            
+
             if actualFormat != outputFormat:
                 result['fallbackFormat'] = actualFormat
-                
+
             return result
         else:
             return {
@@ -364,7 +360,7 @@ def prepareOutputDirectory(outputDirectory):
     """
     try:
         import pathlib
-        
+
         # Normalize path
         outputDirectory = os.path.normpath(outputDirectory.strip())
 
@@ -377,7 +373,7 @@ def prepareOutputDirectory(outputDirectory):
         # Test write permissions
         testFile = os.path.join(outputDirectory, "test_write.tmp")
         usedFallback = False
-        
+
         try:
             with open(testFile, 'w') as f:
                 f.write("test")
