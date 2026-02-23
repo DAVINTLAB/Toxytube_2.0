@@ -501,11 +501,40 @@ with st.container(border=True):
         # Estimated cost warning
         st.warning(f"⚠️ **Note:** This will make {len(dataset)} API calls to {model_info['provider']}. Costs will depend on your provider's pricing.")
 
+        # Classification options: all or top-N by likes
+        classify_all = st.checkbox("Classify all comments", value=True, key="llm_classify_all")
+
+        likes_column = None
+        top_n = None
+        if not classify_all:
+            st.markdown("Select the likes column and how many top comments to classify:")
+            # Allow user to select likes column
+            likes_column = st.selectbox(
+                "Likes column:",
+                options=list(dataset.columns),
+                index=0,
+                help="Select the column that contains the number of likes for each comment.",
+                key="llm_likes_column_select"
+            )
+
+            max_n = len(dataset)
+            default_n = min(100, max_n)
+            top_n = st.number_input(
+                "Number of top comments to classify (N):",
+                min_value=1,
+                max_value=max_n,
+                value=default_n,
+                step=1,
+                key="llm_top_n"
+            )
+
+            st.info(f"Only the top {top_n} comments by `{likes_column}` will be classified.")
+
         # Classification button
         if st.button("🚀 Start Classification", use_container_width=True, type="primary", key="start_llm_classification"):
             st.session_state.llmData['isExecuting'] = True
 
-            # Progress bar
+            # Progress elements
             progress_bar = st.progress(0)
             status_text = st.empty()
             current_text_display = st.empty()
@@ -513,22 +542,42 @@ with st.container(border=True):
             try:
                 status_text.text("Preparing data...")
 
-                # Get all texts
-                all_texts = dataset[text_column].astype(str).tolist()
+                # Decide dataset to classify
+                if classify_all:
+                    working_df = dataset.copy()
+                    original_indices = working_df.index.tolist()
+                else:
+                    # Ensure likes_column selected
+                    if likes_column is None:
+                        st.error("⚠️ Please select a likes column to proceed.")
+                        st.session_state.llmData['isExecuting'] = False
+                        raise Exception("Likes column not selected")
+
+                    # Build top-N dataframe preserving original indices
+                    try:
+                        top_n_int = int(top_n)
+                    except Exception:
+                        top_n_int = int(default_n)
+
+                    working_df = dataset.sort_values(by=likes_column, ascending=False).head(top_n_int)
+                    original_indices = working_df.index.tolist()
+
+                # Get texts to classify
+                all_texts = working_df[text_column].astype(str).tolist()
                 total_texts = len(all_texts)
 
                 status_text.text(f"Classifying {total_texts} texts...")
 
                 # Progress callback
                 def update_progress(current, total):
-                    progress = current / total * 0.9  # 90% for classification
+                    progress = current / total * 0.9 if total > 0 else 0
                     progress_bar.progress(progress)
                     status_text.text(f"Classifying... {current}/{total} texts")
                     if current <= total and current > 0:
                         preview_text = all_texts[current - 1][:100] + "..." if len(all_texts[current - 1]) > 100 else all_texts[current - 1]
                         current_text_display.text(f"Current text: {preview_text}")
 
-                # Classify
+                # Run classification on working_df texts
                 classification_results, error = classify_texts_llm(
                     all_texts,
                     st.session_state.llmData['promptInstructions'],
@@ -545,12 +594,35 @@ with st.container(border=True):
                     status_text.text("Organizing results...")
                     current_text_display.empty()
 
-                    # Create results dataframe
-                    results_df = create_results_dataframe(
-                        dataset,
-                        text_column,
-                        classification_results
-                    )
+                    # If we classified the entire dataset, simply build results df
+                    if classify_all:
+                        results_df = create_results_dataframe(
+                            dataset,
+                            text_column,
+                            classification_results
+                        )
+                    else:
+                        # Create dataframe for just the top-N results
+                        temp_results_df = create_results_dataframe(
+                            working_df,
+                            text_column,
+                            classification_results
+                        )
+
+                        # Initialize results as a copy of the original dataset
+                        results_df = dataset.copy()
+
+                        # Ensure classification columns exist and default to 'not classified'
+                        results_df['llm_classification'] = 'not classified'
+                        results_df['llm_confidence'] = 'not classified'
+                        results_df['llm_reasoning'] = 'not classified'
+                        results_df['llm_error'] = None
+
+                        # Map the classified top-N back to original indices
+                        results_df.loc[original_indices, 'llm_classification'] = temp_results_df['llm_classification'].values
+                        results_df.loc[original_indices, 'llm_confidence'] = temp_results_df['llm_confidence'].values
+                        results_df.loc[original_indices, 'llm_reasoning'] = temp_results_df['llm_reasoning'].values
+                        results_df.loc[original_indices, 'llm_error'] = temp_results_df['llm_error'].values
 
                     # Update global dataset with classification results
                     st.session_state.globalData['dataset'] = results_df

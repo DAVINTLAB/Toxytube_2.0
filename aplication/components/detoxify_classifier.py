@@ -4,7 +4,19 @@ Contains all business logic for text classification using Detoxify library
 """
 import torch
 import gc
+import transformers as _transformers
+from transformers import AutoModelForSequenceClassification as _AutoModelForSequenceClassification
 from detoxify import Detoxify
+
+# Some versions of the `detoxify` package import model classes directly from
+# `transformers` (for example `transformers.XLMRobertaForSequenceClassification`).
+# In environments where those direct attributes are not exposed, Detoxify's
+# import fails. Provide safe aliases to `AutoModelForSequenceClassification`
+# so Detoxify can import expected names without requiring changes to the
+# installed `transformers` package.
+for _alias in ("XLMRobertaForSequenceClassification", "RobertaForSequenceClassification", "XLMRobertaModel"):
+    if not hasattr(_transformers, _alias):
+        setattr(_transformers, _alias, _AutoModelForSequenceClassification)
 
 
 # =============================================================================
