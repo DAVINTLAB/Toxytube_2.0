@@ -40,7 +40,8 @@ if 'analysisState' not in st.session_state:
     st.session_state.analysisState = {
         'bert_threshold': 0.5,
         'detoxify_threshold': 0.5,
-        'llm_confidence_filter': ['high', 'medium', 'low']
+        'llm_confidence_filter': ['high', 'medium', 'low'],
+        'bert_use_argmax': False,
     }
 
 # Shared palette and sentiment mapping for donuts across the page
@@ -190,7 +191,15 @@ def create_confidence_donut(df, llm_cols, title, height=350):
     if 'confidence' not in llm_cols:
         return None
 
-    confidence_counts = df[llm_cols['confidence']].value_counts()
+    # Normalize confidence strings to avoid duplicates like "High" vs "high"
+    conf_series = (
+        df[llm_cols['confidence']]
+        .dropna()
+        .astype(str)
+        .str.strip()
+        .str.lower()
+    )
+    confidence_counts = conf_series.value_counts()
 
     # Default colors for confidence levels (fallback)
     color_map = {
@@ -229,7 +238,7 @@ def create_confidence_donut(df, llm_cols, title, height=350):
         title=dict(text=title, font=dict(size=14)),
         height=height,
         margin=dict(l=20, r=20, t=40, b=20),
-        showlegend=False,
+        showlegend=True,
         annotations=[dict(
             text=f'{len(df)}<br>texts',
             x=0.5, y=0.5,
@@ -289,7 +298,93 @@ def create_class_distribution_donut(df, prob_columns, threshold, title, height=3
         title=dict(text=title, font=dict(size=14)),
         height=height,
         margin=dict(l=20, r=20, t=40, b=20),
-        showlegend=False,
+        showlegend=True,
+        annotations=[dict(
+            text=f'≥{threshold:.2f}',
+            x=0.5, y=0.5,
+            font_size=12,
+            showarrow=False
+        )]
+    )
+
+    return fig
+
+
+def create_bert_argmax_distribution_donut(df, bert_cols, threshold, title, height=350):
+    """
+    Create donut chart for BERT where each text is assigned to a single
+    final class based on the highest probability (argmax). Only texts whose
+    maximum BERT probability is >= threshold are counted.
+    """
+    # Keep only probability columns that exist in the dataframe
+    available_bert_cols = {label: col for label, col in bert_cols.items() if col in df.columns}
+    if not available_bert_cols:
+        # Fallback: behave like empty distribution
+        labels = ['Below threshold']
+        values = [len(df)]
+    else:
+        prob_cols = list(available_bert_cols.values())
+        sub = df[prob_cols].copy()
+
+        if sub.empty:
+            labels = ['Below threshold']
+            values = [len(df)]
+        else:
+            # Replace NaNs with -inf so they don't win the argmax
+            sub_filled = sub.fillna(float('-inf'))
+
+            # Compute max probability and argmax column per row
+            max_probs = sub_filled.max(axis=1)
+            argmax_cols = sub_filled.idxmax(axis=1)
+
+            # Map column name to label
+            col_to_label = {col: label for label, col in available_bert_cols.items()}
+            bert_final = argmax_cols.map(col_to_label)
+
+            # Apply threshold on the max probability
+            mask = max_probs >= threshold
+            bert_final_filtered = bert_final[mask]
+
+            class_counts_series = bert_final_filtered.value_counts(dropna=True)
+
+            if class_counts_series.empty:
+                labels = ['Below threshold']
+                values = [len(df)]
+            else:
+                labels = list(class_counts_series.index.astype(str))
+                values = list(class_counts_series.values)
+
+    # Build colors using shared palette and sentiment overrides
+    colors = []
+    for lbl in labels:
+        key = str(lbl).strip()
+        low = key.lower()
+        if low in sentiment_color_map:
+            colors.append(sentiment_color_map[low])
+            _label_color_map[key] = sentiment_color_map[low]
+        else:
+            if key in _label_color_map:
+                colors.append(_label_color_map[key])
+            else:
+                c = default_palette[_color_idx['i'] % len(default_palette)]
+                _label_color_map[key] = c
+                colors.append(c)
+                _color_idx['i'] += 1
+
+    fig = go.Figure(data=[go.Pie(
+        labels=labels,
+        values=values,
+        hole=0.5,
+        marker=dict(colors=colors),
+        textinfo='percent+label',
+        textfont=dict(size=10)
+    )])
+
+    fig.update_layout(
+        title=dict(text=title, font=dict(size=14)),
+        height=height,
+        margin=dict(l=20, r=20, t=40, b=20),
+        showlegend=True,
         annotations=[dict(
             text=f'≥{threshold:.2f}',
             x=0.5, y=0.5,
@@ -361,7 +456,7 @@ def create_llm_class_distribution_donut(df, llm_cols, confidence_filter, title, 
         title=dict(text=title, font=dict(size=14)),
         height=height,
         margin=dict(l=20, r=20, t=40, b=20),
-        showlegend=False,
+        showlegend=True,
         annotations=[dict(
             text=f'{len(filtered_df)}<br>texts',
             x=0.5, y=0.5,
@@ -625,12 +720,21 @@ def create_bert_llm_agreement_table(df, text_column, likes_col, author_col, repl
     if bert_col_name not in df_table.columns or llm_col_name not in df_table.columns:
         return None, 'Required columns not present after processing.'
 
+    # Prepare lowercase LLM classification for comparison
+    llm_lower = df_table[llm_col_name].astype(str).str.lower()
+
+    # Only consider rows where:
+    # - Both BERT and LLM classifications are not null
+    # - LLM actually classified the text (value different from "not classified")
+    # - BERT and LLM agree on the class label (case-insensitive)
     mask = (
         df_table[bert_col_name].notna()
     ) & (
         df_table[llm_col_name].notna()
     ) & (
-        df_table[bert_col_name].astype(str).str.lower() == df_table[llm_col_name].astype(str).str.lower()
+        llm_lower != 'not classified'
+    ) & (
+        df_table[bert_col_name].astype(str).str.lower() == llm_lower
     )
 
     df_agree = df_table[mask].copy()
@@ -859,6 +963,15 @@ if config_status['complete']:
                         help="Only samples with probability >= threshold will be shown"
                     )
                     st.session_state.analysisState['bert_threshold'] = bert_threshold
+
+                    # Option to determine a single final class per text (non-multilabel) using argmax
+                    bert_use_argmax = st.checkbox(
+                        "Determine final class by the higher probability (for non-multilabel classification)",
+                        value=st.session_state.analysisState.get('bert_use_argmax', False),
+                        key="bert_use_argmax_checkbox",
+                        help="When enabled, each text is assigned to a single BERT class based on the highest probability."
+                    )
+                    st.session_state.analysisState['bert_use_argmax'] = bert_use_argmax
                 else:
                     st.info("No BERT data to filter.")
                     bert_threshold = 0.5
@@ -883,38 +996,66 @@ if config_status['complete']:
             with col_llm_filter:
                 st.markdown("##### 🧠 LLM Confidence Filter")
                 if has_llm and 'confidence' in llm_cols:
-                    # Get unique confidence levels
-                    unique_confidences = dataset[llm_cols['confidence']].dropna().unique()
-                    confidence_options = [str(c) for c in unique_confidences]
+                    # Get unique confidence levels (normalized to lowercase) to avoid duplicates
+                    raw_confidences = (
+                        dataset[llm_cols['confidence']]
+                        .dropna()
+                        .astype(str)
+                        .str.strip()
+                        .str.lower()
+                        .unique()
+                    )
 
-                    # Default to all selected
-                    default_selection = st.session_state.analysisState.get('llm_confidence_filter', confidence_options)
+                    # Custom order: high, medium, low, then others (e.g., "not classified")
+                    priority = {'high': 0, 'medium': 1, 'low': 2}
+                    confidence_options = sorted(
+                        raw_confidences,
+                        key=lambda x: priority.get(x, 100 + hash(x) % 100)
+                    )
 
-                    # Multi-select buttons using checkboxes
-                    st.markdown("Select confidence levels:")
+                    # Default: keep last selection from session_state or all options
+                    previous_selection = st.session_state.analysisState.get('llm_confidence_filter')
+                    if previous_selection:
+                        # Normalize previous selection to lowercase and keep only existing options
+                        default_selection = [
+                            str(c).strip().lower()
+                            for c in previous_selection
+                            if str(c).strip().lower() in confidence_options
+                        ]
+                        if not default_selection:
+                            default_selection = confidence_options
+                    else:
+                        default_selection = confidence_options
 
-                    selected_confidences = []
-                    cols_check = st.columns(len(confidence_options) if len(confidence_options) <= 3 else 3)
+                    # Multiselect similar to Word Cloud filters
+                    pretty_labels = {
+                        'high': 'High',
+                        'medium': 'Medium',
+                        'low': 'Low',
+                        'not classified': 'Not Classified',
+                    }
 
-                    for i, conf in enumerate(confidence_options):
-                        col_idx = i % 3
-                        with cols_check[col_idx]:
-                            # Color coding for confidence
-                            if conf.lower() == 'high':
-                                emoji = "🟢"
-                            elif conf.lower() == 'medium':
-                                emoji = "🟡"
-                            else:
-                                emoji = "🔴"
+                    def _format_conf_label(v: str) -> str:
+                        lvl = str(v).strip().lower()
+                        base = pretty_labels.get(lvl, lvl.capitalize())
+                        if lvl == 'high':
+                            return f"🟢 {base}"
+                        elif lvl == 'medium':
+                            return f"🟡 {base}"
+                        elif lvl == 'low':
+                            return f"🔴 {base}"
+                        else:
+                            return base
 
-                            is_selected = st.checkbox(
-                                f"{emoji} {conf.capitalize()}",
-                                value=conf in default_selection,
-                                key=f"llm_conf_{conf}"
-                            )
-                            if is_selected:
-                                selected_confidences.append(conf)
+                    selected_confidences = st.multiselect(
+                        "Select confidence levels:",
+                        options=confidence_options,
+                        default=default_selection,
+                        format_func=_format_conf_label,
+                        key="llm_confidence_filter_multiselect",
+                    )
 
+                    # Persist (store normalized, lowercase values)
                     st.session_state.analysisState['llm_confidence_filter'] = selected_confidences
                     llm_confidence_filter = selected_confidences
                 else:
@@ -934,14 +1075,30 @@ if config_status['complete']:
             with col_bert_dist:
                 st.markdown("##### 🤖 BERT Classes")
                 if has_bert:
-                    fig_bert_dist = create_class_distribution_donut(
-                        dataset, bert_cols, bert_threshold,
-                        f"BERT Classes (≥{bert_threshold:.2f})"
-                    )
+                    bert_use_argmax = st.session_state.analysisState.get('bert_use_argmax', False)
+
+                    if bert_use_argmax:
+                        fig_bert_dist = create_bert_argmax_distribution_donut(
+                            dataset, bert_cols, bert_threshold,
+                            f"BERT Classes (argmax, ≥{bert_threshold:.2f})"
+                        )
+                    else:
+                        fig_bert_dist = create_class_distribution_donut(
+                            dataset, bert_cols, bert_threshold,
+                            f"BERT Classes (≥{bert_threshold:.2f})"
+                        )
                     st.plotly_chart(fig_bert_dist, use_container_width=True)
 
                     # Show count details
-                    total_above = sum((dataset[col] >= bert_threshold).sum() for col in bert_cols.values())
+                    if bert_use_argmax:
+                        prob_cols = [col for col in bert_cols.values() if col in dataset.columns]
+                        if prob_cols:
+                            max_probs = dataset[prob_cols].fillna(float('-inf')).max(axis=1)
+                            total_above = int((max_probs >= bert_threshold).sum())
+                        else:
+                            total_above = 0
+                    else:
+                        total_above = sum((dataset[col] >= bert_threshold).sum() for col in bert_cols.values())
                     st.caption(f"Total samples above threshold: {total_above:,}")
                 else:
                     st.info("No BERT classification data available.")
@@ -1187,13 +1344,27 @@ if config_status['complete']:
                 if agree_err_full:
                     agreement_pct = None
                     total_agree = 0
+                    total_rows = 0
+                    total_dataset_rows = len(dataset) if dataset is not None else 0
                 else:
-                    total_rows = len(dataset) if dataset is not None else 0
+                    # Total of texts that were actually classified by the LLM
+                    # (exclude rows where LLM left "not classified")
+                    total_dataset_rows = len(dataset) if dataset is not None else 0
+                    if dataset is not None and 'classification' in llm_cols and llm_cols['classification'] in dataset.columns:
+                        llm_class_col = llm_cols['classification']
+                        llm_series = dataset[llm_class_col]
+                        valid_mask = llm_series.notna() & (llm_series.astype(str).str.lower() != 'not classified')
+                        total_rows = int(valid_mask.sum())
+                    else:
+                        total_rows = total_dataset_rows
+
                     total_agree = len(df_agree_full) if df_agree_full is not None else 0
                     agreement_pct = (total_agree / total_rows * 100) if total_rows > 0 else 0.0
             except Exception:
                 agreement_pct = None
                 total_agree = 0
+                total_rows = 0
+                total_dataset_rows = len(dataset) if dataset is not None else 0
 
             # --- Class distribution donuts (two donuts: LLM and BERT) ---
             try:
@@ -1251,7 +1422,7 @@ if config_status['complete']:
                                         _color_idx['i'] += 1
 
                             fig = go.Figure(data=[go.Pie(labels=labels, values=values, hole=0.5, marker=dict(colors=colors), textinfo='percent+label')])
-                            fig.update_layout(title=title, height=320, margin=dict(l=10, r=10, t=30, b=10), showlegend=False)
+                            fig.update_layout(title=title, height=320, margin=dict(l=10, r=10, t=30, b=10), showlegend=True)
                             with col:
                                 st.plotly_chart(fig, use_container_width=True)
 
@@ -1268,10 +1439,9 @@ if config_status['complete']:
             with col_a:
                 # Show agreement as percentage and absolute counts
                 if agreement_pct is None:
-                    st.metric("Agreement", "N/A")
+                    st.metric("Agreement*", "N/A")
                 else:
-                    total_rows = len(dataset) if dataset is not None else 0
-                    st.metric("Agreement", f"{agreement_pct:.2f}% ({total_agree:,}/{total_rows:,})")
+                    st.metric("Agreement*", f"{agreement_pct:.2f}% ({total_agree:,}/{total_rows:,})")
 
             with col_b:
                 agree_top_n = st.selectbox(
@@ -1306,6 +1476,13 @@ if config_status['complete']:
                     classes = df_agree_full['🤖 BERT Final'].dropna().astype(str).unique().tolist()
                     class_options += sorted(classes)
                 selected_agree_class = st.selectbox('Filter class:', options=class_options, index=0, key='agree_class_filter')
+
+            # Global note about how many texts were actually classified by the LLM
+            if agreement_pct is not None:
+                st.caption(
+                    f"\* The LLM classified {total_rows:,} out of {total_dataset_rows:,} texts while BERT classified all texts; "
+                    f"only those texts classified in both (BERT and LLM) are used in the agreement calculation."
+                )
 
             # Create the agreement table using the chosen top_n and sort_by
             df_agree, agree_error = create_bert_llm_agreement_table(

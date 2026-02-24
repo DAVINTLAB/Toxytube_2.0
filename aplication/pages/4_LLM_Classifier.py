@@ -736,7 +736,7 @@ with st.container(border=True):
                 hovertemplate='<b>%{label}</b><br>Count: %{value}<br>Percentage: %{percent}<extra></extra>'
             )
             fig_class.update_layout(
-                showlegend=False,
+                showlegend=True,
                 margin=dict(t=20, b=20, l=20, r=20),
                 height=350
             )
@@ -744,7 +744,15 @@ with st.container(border=True):
 
         with col2:
             st.markdown("**Confidence Distribution:**")
-            confidence_dist = results_df['llm_confidence'].value_counts().reset_index()
+            # Normalize confidence strings (e.g., 'High' vs 'high') before counting
+            conf_series = (
+                results_df['llm_confidence']
+                .dropna()
+                .astype(str)
+                .str.strip()
+                .str.lower()
+            )
+            confidence_dist = conf_series.value_counts().reset_index()
             confidence_dist.columns = ['Confidence', 'Count']
 
             fig_conf = px.pie(
@@ -759,7 +767,7 @@ with st.container(border=True):
                 hovertemplate='<b>%{label}</b><br>Count: %{value}<br>Percentage: %{percent}<extra></extra>'
             )
             fig_conf.update_layout(
-                showlegend=False,
+                showlegend=True,
                 margin=dict(t=20, b=20, l=20, r=20),
                 height=350
             )
