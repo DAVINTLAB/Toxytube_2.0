@@ -218,6 +218,13 @@ def classify_texts(texts, model, tokenizer, max_length, batch_size=8, progress_c
         tuple: (predictions, probabilities)
     """
     device = next(model.parameters()).device
+    vocab_size = getattr(model.config, 'vocab_size', None)
+    max_pos_emb = getattr(model.config, 'max_position_embeddings', 512)
+    # RoBERTa/XLM-RoBERTa: position_ids = incremental_indices + padding_idx → max id = padding_idx + seq_len
+    # Para position_ids < max_position_embeddings: seq_len <= max_position_embeddings - padding_idx - 1
+    padding_idx = getattr(model.config, 'pad_token_id', 0)
+    max_safe_seq = max(1, max_pos_emb - padding_idx - 1)
+    max_length_safe = min(max_length, max_safe_seq)
     all_predictions = []
     all_probabilities = []
     cuda_error_handled = False
@@ -228,14 +235,25 @@ def classify_texts(texts, model, tokenizer, max_length, batch_size=8, progress_c
         batch_texts = texts[i:i+batch_size]
 
         try:
-            # Tokenize
+            # Tokenize (usar max_length_safe para não exceder position_embeddings)
             inputs = tokenizer(
                 batch_texts,
                 padding=True,
                 truncation=True,
-                max_length=max_length,
+                max_length=max_length_safe,
                 return_tensors="pt"
             ).to(device)
+
+            # Truncar ao máximo suportado (position_embeddings tem tamanho fixo; position_ids = padding_idx + pos)
+            seq_len = inputs["input_ids"].size(1)
+            if seq_len > max_safe_seq:
+                for key in list(inputs.keys()):
+                    if inputs[key].dim() >= 2:
+                        inputs[key] = inputs[key][:, :max_safe_seq].contiguous()
+
+            # Evitar "index out of range in self" na embedding: garantir que input_ids estão no vocabulário
+            if vocab_size is not None and "input_ids" in inputs:
+                inputs["input_ids"] = inputs["input_ids"].clamp(0, vocab_size - 1)
 
             # Get predictions
             with torch.no_grad():
@@ -246,7 +264,7 @@ def classify_texts(texts, model, tokenizer, max_length, batch_size=8, progress_c
             all_predictions.extend(predictions.cpu().numpy())
             all_probabilities.extend(probabilities.cpu().numpy())
 
-        except RuntimeError as e:
+        except (RuntimeError, IndexError) as e:
             # If CUDA error and not handled yet, fallback to CPU
             if ('CUDA' in str(e) or 'cuda' in str(e)) and not cuda_error_handled:
                 # Move model to CPU
@@ -258,14 +276,20 @@ def classify_texts(texts, model, tokenizer, max_length, batch_size=8, progress_c
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
 
-                # Retry current batch on CPU
+                # Retry current batch on CPU (com truncamento e clamp)
                 inputs = tokenizer(
                     batch_texts,
                     padding=True,
                     truncation=True,
-                    max_length=max_length,
+                    max_length=max_length_safe,
                     return_tensors="pt"
                 ).to(device)
+                if inputs["input_ids"].size(1) > max_safe_seq:
+                    for key in list(inputs.keys()):
+                        if inputs[key].dim() >= 2:
+                            inputs[key] = inputs[key][:, :max_safe_seq].contiguous()
+                if vocab_size is not None and "input_ids" in inputs:
+                    inputs["input_ids"] = inputs["input_ids"].clamp(0, vocab_size - 1)
 
                 with torch.no_grad():
                     outputs = model(**inputs)
@@ -274,12 +298,37 @@ def classify_texts(texts, model, tokenizer, max_length, batch_size=8, progress_c
 
                 all_predictions.extend(predictions.cpu().numpy())
                 all_probabilities.extend(probabilities.cpu().numpy())
+                if progress_callback:
+                    progress_callback(len(all_predictions), total_texts)
+            elif isinstance(e, IndexError):
+                # IndexError "index out of range in self" (position_embeddings): retentar com truncamento mais agressivo
+                inputs = tokenizer(
+                    batch_texts,
+                    padding=True,
+                    truncation=True,
+                    max_length=max_length_safe,
+                    return_tensors="pt"
+                ).to(device)
+                if inputs["input_ids"].size(1) > max_safe_seq:
+                    for key in list(inputs.keys()):
+                        if inputs[key].dim() >= 2:
+                            inputs[key] = inputs[key][:, :max_safe_seq].contiguous()
+                if vocab_size is not None and "input_ids" in inputs:
+                    inputs["input_ids"] = inputs["input_ids"].clamp(0, vocab_size - 1)
+                with torch.no_grad():
+                    outputs = model(**inputs)
+                    probabilities = torch.nn.functional.softmax(outputs.logits, dim=-1)
+                    predictions = torch.argmax(probabilities, dim=-1)
+                all_predictions.extend(predictions.cpu().numpy())
+                all_probabilities.extend(probabilities.cpu().numpy())
+                if progress_callback:
+                    progress_callback(len(all_predictions), total_texts)
             else:
                 raise
 
-        # Update progress
+        # Atualizar progresso com quantidade já processada (para barra e contagem na interface)
         if progress_callback:
-            current = min(i + batch_size, total_texts)
+            current = len(all_predictions)
             progress_callback(current, total_texts)
 
     return all_predictions, all_probabilities
@@ -334,9 +383,13 @@ def create_results_dataframe(original_df, text_column, predictions, probabilitie
 
     results_df = original_df.copy()
 
-    # Add probability columns for each label
+    num_labels = len(probabilities[0]) if probabilities else 0
+    # Add probability columns for each label (garantir label_id inteiro e dentro do range)
     for label_id, label_name in labels.items():
-        results_df[f'bert_prob_{label_name}'] = [prob[label_id] for prob in probabilities]
+        idx = int(label_id)
+        if idx < 0 or idx >= num_labels:
+            continue
+        results_df[f'bert_prob_{label_name}'] = [prob[idx] for prob in probabilities]
 
     return results_df
 

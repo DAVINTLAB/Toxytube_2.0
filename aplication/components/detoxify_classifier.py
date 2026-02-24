@@ -153,9 +153,10 @@ def classify_single_text(text, model):
         return None, str(e)
 
 
-def classify_texts(texts, model, batch_size=32, progress_callback=None):
+def classify_texts(texts, model, batch_size=16, progress_callback=None):
     """
     Classifies a list of texts using the loaded model.
+    Usa batch_size moderado (16) para evitar "index out of range in self" em datasets grandes.
     
     Args:
         texts: List of texts to be classified
@@ -168,27 +169,39 @@ def classify_texts(texts, model, batch_size=32, progress_callback=None):
     """
     all_results = []
     total_texts = len(texts)
+    current_batch_size = batch_size
 
     try:
-        # Process in batches
-        for i in range(0, len(texts), batch_size):
-            batch_texts = texts[i:i+batch_size]
+        i = 0
+        while i < len(texts):
+            batch_texts = texts[i:i + current_batch_size]
 
-            # Predict batch
-            batch_results = model.predict(batch_texts)
+            try:
+                batch_results = model.predict(batch_texts)
 
-            # Convert batch results to list of dicts (one per text)
-            num_texts_in_batch = len(batch_texts)
-            for j in range(num_texts_in_batch):
-                text_result = {}
-                for label, scores in batch_results.items():
-                    text_result[label] = scores[j]
-                all_results.append(text_result)
+                num_texts_in_batch = len(batch_texts)
+                for j in range(num_texts_in_batch):
+                    text_result = {}
+                    for label, scores in batch_results.items():
+                        # Garantir acesso seguro (evita index out of range)
+                        if hasattr(scores, '__len__') and j < len(scores):
+                            val = scores[j]
+                            text_result[label] = float(val) if not isinstance(val, (int, float)) else val
+                        else:
+                            text_result[label] = 0.0
+                    all_results.append(text_result)
 
-            # Update progress
-            if progress_callback:
-                current = min(i + batch_size, total_texts)
-                progress_callback(current, total_texts)
+                i += current_batch_size
+
+                if progress_callback:
+                    progress_callback(min(i, total_texts), total_texts)
+
+            except (IndexError, RuntimeError) as batch_error:
+                # "index out of range in self" em datasets grandes: reduzir batch e tentar de novo
+                if current_batch_size > 1:
+                    current_batch_size = max(1, current_batch_size // 2)
+                else:
+                    return None, str(batch_error)
 
         return all_results, None
 

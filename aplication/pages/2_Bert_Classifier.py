@@ -6,6 +6,7 @@ import streamlit as st
 import pandas as pd
 import os
 import pathlib
+import traceback
 from datetime import datetime
 from io import BytesIO
 import sys
@@ -528,12 +529,12 @@ with st.container(border=True):
                 all_texts = dataset[text_column].astype(str).tolist()
                 total_texts = len(all_texts)
 
-                status_text.text(f"Classifying {total_texts} texts...")
-
-                # Progress callback
+                # Progress callback: barra 0→1 conforme textos processados; contagem na tela
                 def update_progress(current, total):
-                    progress = 0.2 + (current / total * 0.6)  # 20% to 80%
-                    progress_bar.progress(progress)
+                    progress_bar.progress(current / total if total else 0)
+                    status_text.text(f"Classifying... {current}/{total} texts")
+
+                update_progress(0, total_texts)
 
                 # Classify
                 model = st.session_state.classificationData['model']
@@ -546,7 +547,7 @@ with st.container(border=True):
                     progress_callback=update_progress
                 )
 
-                progress_bar.progress(0.8)
+                progress_bar.progress(1.0)
                 status_text.text("Organizing results...")
 
                 # Use custom labels if available, otherwise use original labels
@@ -586,6 +587,8 @@ with st.container(border=True):
 
             except Exception as e:
                 st.error(f"❌ Error during classification: {str(e)}")
+                with st.expander("🔍 Traceback completo (clique para expandir)", expanded=True):
+                    st.code(traceback.format_exc(), language="text")
             finally:
                 st.session_state.classificationData['isExecuting'] = False
 

@@ -456,7 +456,7 @@ with st.container(border=True):
                 classification_results, error = classify_texts(
                     all_texts,
                     model,
-                    batch_size=32,
+                    batch_size=16,
                     progress_callback=update_progress
                 )
 
