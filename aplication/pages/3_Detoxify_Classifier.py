@@ -33,6 +33,9 @@ if 'detoxifyData' not in st.session_state:
         'modelInfo': {},                    # Model information
         'classificationResults': None,      # Classification results
         'isExecuting': False,               # Execution status
+        'lastLikesColumn': None,            # Last selected likes column
+        'lastTopN': 100,                    # Last selected top N value
+        'classificationTime': None,         # Total classification time
     }
 
 # Initialize global data if not exists
@@ -428,6 +431,47 @@ with st.container(border=True):
         with col3:
             st.metric("Model", st.session_state.detoxifyData['modelInfo'].get('model_display_name', 'N/A'))
 
+        st.markdown("")
+
+        # Classification options: all or top-N by likes
+        classify_all = st.checkbox("Classify all comments", value=True, key="detoxify_classify_all")
+
+        likes_column = None
+        top_n = None
+        if not classify_all:
+            st.markdown("Select the likes column and how many top comments to classify:")
+            
+            # Determine default index for likes column
+            last_likes_col = st.session_state.detoxifyData.get('lastLikesColumn')
+            likes_column_options = list(dataset.columns)
+            if last_likes_col and last_likes_col in likes_column_options:
+                likes_default_index = likes_column_options.index(last_likes_col)
+            else:
+                likes_default_index = 0
+            
+            # Allow user to select likes column
+            likes_column = st.selectbox(
+                "Likes column:",
+                options=likes_column_options,
+                index=likes_default_index,
+                help="Select the column that contains the number of likes for each comment.",
+                key="detoxify_likes_column_select"
+            )
+
+            max_n = len(dataset)
+            last_top_n = st.session_state.detoxifyData.get('lastTopN', 100)
+            default_n = min(last_top_n, max_n)
+            top_n = st.number_input(
+                "Number of top comments to classify (N):",
+                min_value=1,
+                max_value=max_n,
+                value=default_n,
+                step=1,
+                key="detoxify_top_n"
+            )
+
+            st.info(f"Only the top {top_n} comments by `{likes_column}` will be classified.")
+
         # Classification button
         if st.button("🚀 Start Classification", use_container_width=True, type="primary", key="start_detoxify"):
             st.session_state.detoxifyData['isExecuting'] = True
@@ -435,21 +479,68 @@ with st.container(border=True):
             # Progress bar
             progress_bar = st.progress(0)
             status_text = st.empty()
+            time_text = st.empty()
 
             try:
                 status_text.text("Preparing data...")
 
-                # Get all texts
-                all_texts = dataset[text_column].astype(str).tolist()
+                # Decide dataset to classify
+                if classify_all:
+                    working_df = dataset.copy()
+                    original_indices = working_df.index.tolist()
+                else:
+                    # Ensure likes_column selected
+                    if likes_column is None:
+                        st.error("⚠️ Please select a likes column to proceed.")
+                        st.session_state.detoxifyData['isExecuting'] = False
+                        raise Exception("Likes column not selected")
+
+                    # Build top-N dataframe preserving original indices
+                    try:
+                        top_n_int = int(top_n)
+                    except Exception:
+                        top_n_int = min(100, len(dataset))
+
+                    working_df = dataset.sort_values(by=likes_column, ascending=False).head(top_n_int)
+                    original_indices = working_df.index.tolist()
+
+                # Get texts to classify
+                all_texts = working_df[text_column].astype(str).tolist()
                 total_texts = len(all_texts)
 
                 status_text.text(f"Classifying {total_texts} texts...")
 
-                # Progress callback
+                # Time tracking variables
+                import time
+                start_time = time.time()
+
+                # Progress callback with time estimation
                 def update_progress(current, total):
                     progress = current / total * 0.7  # 70% for classification
                     progress_bar.progress(progress)
                     status_text.text(f"Classifying... {current}/{total} texts")
+                    
+                    # Calculate time estimates
+                    if current > 0:
+                        elapsed_time = time.time() - start_time
+                        avg_time_per_text = elapsed_time / current
+                        remaining_texts = total - current
+                        estimated_remaining = avg_time_per_text * remaining_texts
+                        
+                        # Format time
+                        def format_time(seconds):
+                            if seconds < 60:
+                                return f"{int(seconds)}s"
+                            elif seconds < 3600:
+                                mins = int(seconds // 60)
+                                secs = int(seconds % 60)
+                                return f"{mins}m {secs}s"
+                            else:
+                                hours = int(seconds // 3600)
+                                mins = int((seconds % 3600) // 60)
+                                return f"{hours}h {mins}m"
+                        
+                        time_text.text(f"⏱️ Elapsed: {format_time(elapsed_time)} | Avg: {avg_time_per_text:.2f}s/text | Estimated remaining: {format_time(estimated_remaining)}")
 
                 # Classify
                 model = st.session_state.detoxifyData['model']
@@ -466,29 +557,48 @@ with st.container(border=True):
                     progress_bar.progress(0.8)
                     status_text.text("Organizing results...")
 
-                    # Create results dataframe
-                    results_df = create_results_dataframe(
-                        dataset,
-                        text_column,
-                        classification_results
-                    )
+                    # If we classified the entire dataset, simply build results df
+                    if classify_all:
+                        results_df = create_results_dataframe(
+                            dataset,
+                            text_column,
+                            classification_results
+                        )
+                    else:
+                        # Create dataframe for just the top-N results
+                        temp_results_df = create_results_dataframe(
+                            working_df,
+                            text_column,
+                            classification_results
+                        )
+
+                        # Initialize results as a copy of the original dataset
+                        results_df = dataset.copy()
+
+                        # Ensure classification columns exist and default to 'not_classified'
+                        # Get probability columns from temp_results_df
+                        prob_columns = [col for col in temp_results_df.columns if col.startswith('detoxify_prob_')]
+                        for col in prob_columns:
+                            results_df[col] = 'not_classified'
+
+                        # Map the classified top-N back to original indices
+                        for col in prob_columns:
+                            results_df.loc[original_indices, col] = temp_results_df[col].values
 
                     # Update global dataset with classification results
                     st.session_state.globalData['dataset'] = results_df
                     st.session_state.detoxifyData['classificationResults'] = results_df
+                    
+                    # Save classification settings and time
+                    total_time = time.time() - start_time
+                    st.session_state.detoxifyData['classificationTime'] = total_time
+                    if not classify_all and likes_column:
+                        st.session_state.detoxifyData['lastLikesColumn'] = likes_column
+                        st.session_state.detoxifyData['lastTopN'] = top_n
 
-                    progress_bar.progress(0.9)
-                    status_text.text("Saving results...")
-
-                    # Auto-save global dataset
-                    success, result = save_global_dataset()
-
-                    if success:
-                        progress_bar.progress(1.0)
-                        status_text.text("Classification completed!")
-                        st.success(f"✅ Classification completed! File saved at: `{result}`")
-                    else:
-                        st.warning(f"⚠️ Classification completed but error saving file: {result}")
+                    progress_bar.progress(1.0)
+                    status_text.text("✅ Classification completed!")
+                    st.success(f"✅ Classification completed successfully!")
 
                     st.rerun()
 
@@ -514,59 +624,27 @@ with st.container(border=True):
     # Step 2 completion indicator
     if step2_complete:
         st.success("✅ **Step 2 completed!** Classification performed successfully.")
+        
+        # Show classification time if available
+        classification_time = st.session_state.detoxifyData.get('classificationTime')
+        if classification_time:
+            if classification_time < 60:
+                time_str = f"{classification_time:.1f}s"
+            elif classification_time < 3600:
+                mins = int(classification_time // 60)
+                secs = int(classification_time % 60)
+                time_str = f"{mins}m {secs}s"
+            else:
+                hours = int(classification_time // 3600)
+                mins = int((classification_time % 3600) // 60)
+                time_str = f"{hours}h {mins}m"
+            st.info(f"⏱️ **Classification completed in:** {time_str}")
 
         # Results Preview
         st.markdown("---")
         st.markdown("#### 📊 Results Preview")
 
         results_df = st.session_state.detoxifyData['classificationResults']
-
-        # Show threshold-based distribution chart
-        st.markdown("**Threshold-based Class Distribution:**")
-        st.markdown("This chart shows how many comments would be classified as each class at different probability thresholds.")
-
-        import plotly.graph_objects as go
-        import numpy as np
-
-        # Get probability columns
-        prob_columns = [col for col in results_df.columns if col.startswith('detoxify_prob_')]
-
-        # Generate thresholds from 0.0 to 1.0
-        thresholds = np.linspace(0.0, 1.0, 101)
-
-        fig = go.Figure()
-
-        # Add a line for each class
-        colors = ['#636EFA', '#EF553B', '#00CC96', '#AB63FA', '#FFA15A', '#19D3F3', '#FF6692', '#B6E880']
-
-        for idx, col in enumerate(prob_columns):
-            class_name = col.replace('detoxify_prob_', '')
-            counts_at_threshold = []
-
-            for threshold in thresholds:
-                count = (results_df[col] >= threshold).sum()
-                counts_at_threshold.append(count)
-
-            color = colors[idx % len(colors)]
-            fig.add_trace(go.Scatter(
-                x=thresholds,
-                y=counts_at_threshold,
-                mode='lines',
-                name=class_name,
-                line=dict(color=color, width=2),
-                hovertemplate=f'<b>{class_name}</b><br>Threshold: %{{x:.2f}}<br>Count: %{{y}}<extra></extra>'
-            ))
-
-        fig.update_layout(
-            title='Comments per Class at Different Thresholds',
-            xaxis_title='Probability Threshold',
-            yaxis_title='Number of Comments',
-            hovermode='x unified',
-            legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
-            height=500
-        )
-
-        st.plotly_chart(fig, use_container_width=True)
 
         # Show preview
         st.markdown("**Classified Dataset Preview:**")
@@ -575,10 +653,10 @@ with st.container(border=True):
         # Download button
         output_format = st.session_state.globalData['outputFormat']
         output_filename = st.session_state.globalData['outputFileName']
-        
+
         st.markdown("---")
         st.markdown("#### 💾 Download Classified Dataset")
-        
+
         # Convert DataFrame to bytes based on format
         if output_format == 'csv':
             file_data = results_df.to_csv(index=False).encode('utf-8')
@@ -600,7 +678,7 @@ with st.container(border=True):
             file_data = results_df.to_csv(index=False).encode('utf-8')
             mime_type = 'text/csv'
             output_format = 'csv'
-        
+
         st.download_button(
             label=f"📥 Download {output_filename}.{output_format}",
             data=file_data,

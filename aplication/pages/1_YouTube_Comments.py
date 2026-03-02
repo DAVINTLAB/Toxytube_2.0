@@ -548,43 +548,16 @@ with st.container(border=True):
             videoTitle = videoInfo['snippet']['title']
             videoStats = collectionResult['videoStats']
 
-            # Save comments to file
-            progress_text.markdown(f"💾 Saving comments in {outputFormat.upper()}...")
+            # Store comments in session state (no disk save)
+            progress_text.markdown("✅ Preparing results...")
 
-            saveResult = saveCommentsToFile(comments, outputFilePath, outputFormat)
-
-            if saveResult['success']:
-                actualPath = saveResult['filePath']
-                fileSize = saveResult['fileSize']
-
-                # Handle format fallback
-                if 'fallbackFormat' in saveResult:
-                    progress_text.markdown(f"⚠️ Saving as {saveResult['fallbackFormat'].upper()} (original format not supported)...")
-
-                finalMessages = [
-                    "=" * 50,
-                    "✅ COMMENT COLLECTION COMPLETED!",
-                    f"📁 File saved: {actualPath}",
-                    f"📊 Comments collected: {len(comments):,}",
-                    f"💾 File size: {fileSize / 1024:.1f} KB",
-                    f"🎥 Video: {videoTitle[:50]}...",
-                    "=" * 50
-                ]
-
-                st.session_state.youtubeTask['collectionResults'] = {
-                    'success': True,
-                    'outputPath': actualPath,
-                    'totalComments': len(comments),
-                    'videoTitle': videoTitle,
-                    'fileSize': fileSize,
-                    'videoStats': videoStats
-                }
-            else:
-                finalMessages = ["❌ ERRO AO SALVAR ARQUIVO:", saveResult['error']]
-                st.session_state.youtubeTask['collectionResults'] = {
-                    'success': False,
-                    'error': saveResult['error']
-                }
+            st.session_state.youtubeTask['collectionResults'] = {
+                'success': True,
+                'comments': comments,
+                'totalComments': len(comments),
+                'videoTitle': videoTitle,
+                'videoStats': videoStats
+            }
         else:
             # Handle collection errors
             errorType = collectionResult['errorType']
@@ -650,31 +623,18 @@ with st.container(border=True):
                 st.metric("📥 Comments Collected", f"{results['totalComments']:,}")
 
             with col3:
-                st.metric("💾 File Size", f"{results['fileSize'] / 1024:.1f} KB")
-
-            # Show video info
-            st.info(f"💡 **Comments Location**: {results['outputPath']}")
+                # Calculate approximate size from comments data
+                import sys
+                approx_size_kb = sys.getsizeof(str(results.get('comments', []))) / 1024
+                st.metric("💾 Approx. Size", f"{approx_size_kb:.1f} KB")
 
             # Show sample data if available
-            if os.path.exists(results['outputPath']):
+            if 'comments' in results:
                 st.markdown("#### 📋 Comment Sample")
                 try:
-                    # Read sample data based on file extension
-                    filePath = results['outputPath']
-                    fileExtension = filePath.split('.')[-1].lower()
-
-                    if fileExtension == 'csv':
-                        sampleDf = pd.read_csv(filePath).head(5)
-                    elif fileExtension == 'xlsx':
-                        sampleDf = pd.read_excel(filePath).head(5)
-                    elif fileExtension == 'json':
-                        sampleDf = pd.read_json(filePath).head(5)
-                    elif fileExtension == 'parquet':
-                        sampleDf = pd.read_parquet(filePath).head(5)
-                    else:
-                        # Try CSV as fallback
-                        sampleDf = pd.read_csv(filePath).head(5)
-
+                    # Convert comments to DataFrame for preview
+                    comments_data = results['comments']
+                    sampleDf = pd.DataFrame(comments_data).head(5)
                     st.dataframe(sampleDf[['author', 'comment_text', 'published_at', 'like_count']], use_container_width=True)
                 except Exception as e:
                     st.error(f"❌ Error loading sample: {str(e)}")
@@ -689,74 +649,27 @@ with st.container(border=True):
 
                 # Convert DataFrame to bytes based on format
                 try:
-                    if output_format == 'csv':
-                        # Load full dataframe for CSV download
-                        if fileExtension == 'csv':
-                            full_df = pd.read_csv(filePath)
-                        elif fileExtension == 'xlsx':
-                            full_df = pd.read_excel(filePath)
-                        elif fileExtension == 'json':
-                            full_df = pd.read_json(filePath)
-                        elif fileExtension == 'parquet':
-                            full_df = pd.read_parquet(filePath)
-                        else:
-                            full_df = pd.read_csv(filePath)
+                    # Convert comments to DataFrame
+                    full_df = pd.DataFrame(results['comments'])
 
+                    if output_format == 'csv':
                         file_data = full_df.to_csv(index=False).encode('utf-8')
                         mime_type = 'text/csv'
                     elif output_format == 'xlsx':
                         buffer = BytesIO()
-                        # Load full dataframe for download
-                        if fileExtension == 'xlsx':
-                            full_df = pd.read_excel(filePath)
-                        elif fileExtension == 'csv':
-                            full_df = pd.read_csv(filePath)
-                        elif fileExtension == 'json':
-                            full_df = pd.read_json(filePath)
-                        elif fileExtension == 'parquet':
-                            full_df = pd.read_parquet(filePath)
-                        else:
-                            full_df = pd.read_csv(filePath)
-
                         full_df.to_excel(buffer, index=False, engine='openpyxl')
                         file_data = buffer.getvalue()
                         mime_type = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
                     elif output_format == 'json':
-                        if fileExtension == 'json':
-                            full_df = pd.read_json(filePath)
-                        elif fileExtension == 'csv':
-                            full_df = pd.read_csv(filePath)
-                        elif fileExtension == 'xlsx':
-                            full_df = pd.read_excel(filePath)
-                        elif fileExtension == 'parquet':
-                            full_df = pd.read_parquet(filePath)
-                        else:
-                            full_df = pd.read_csv(filePath)
-
                         file_data = full_df.to_json(orient='records', indent=2).encode('utf-8')
                         mime_type = 'application/json'
                     elif output_format == 'parquet':
-                        if fileExtension == 'parquet':
-                            full_df = pd.read_parquet(filePath)
-                        elif fileExtension == 'csv':
-                            full_df = pd.read_csv(filePath)
-                        elif fileExtension == 'xlsx':
-                            full_df = pd.read_excel(filePath)
-                        elif fileExtension == 'json':
-                            full_df = pd.read_json(filePath)
-                        else:
-                            full_df = pd.read_csv(filePath)
-
                         buffer = BytesIO()
                         full_df.to_parquet(buffer, index=False)
                         file_data = buffer.getvalue()
                         mime_type = 'application/octet-stream'
                     else:
                         # Fallback to CSV
-                        if fileExtension == 'csv':
-                            full_df = pd.read_csv(filePath)
-                        else:
-                            full_df = pd.read_excel(filePath) if fileExtension == 'xlsx' else pd.read_json(filePath)
                         file_data = full_df.to_csv(index=False).encode('utf-8')
                         mime_type = 'text/csv'
                         output_format = 'csv'

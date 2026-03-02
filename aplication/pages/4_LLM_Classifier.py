@@ -38,6 +38,9 @@ if 'llmData' not in st.session_state:
         'promptLabels': '',                 # Optional: comma-separated labels
         'classificationResults': None,      # Classification results
         'isExecuting': False,               # Execution status
+        'lastLikesColumn': None,            # Last selected likes column
+        'lastTopN': 100,                    # Last selected top N value
+        'classificationTime': None,         # Total classification time
     }
 
 # Initialize global data if not exists
@@ -537,7 +540,7 @@ with st.container(border=True):
             st.metric("Model", model_info['name'])
 
         # Estimated cost warning
-        st.warning(f"⚠️ **Note:** This will make {len(dataset)} API calls to {model_info['provider']}. Costs will depend on your provider's pricing.")
+        st.warning(f"⚠️ **Note:** This will make API calls to {model_info['provider']}. Costs will depend on your provider's pricing and number of texts. Consider testing with a small subset first or using the cost estimation tool in Step 2.")
 
         # Classification options: all or top-N by likes
         classify_all = st.checkbox("Classify all comments", value=True, key="llm_classify_all")
@@ -546,17 +549,27 @@ with st.container(border=True):
         top_n = None
         if not classify_all:
             st.markdown("Select the likes column and how many top comments to classify:")
+
+            # Determine default index for likes column
+            last_likes_col = st.session_state.llmData.get('lastLikesColumn')
+            likes_column_options = list(dataset.columns)
+            if last_likes_col and last_likes_col in likes_column_options:
+                likes_default_index = likes_column_options.index(last_likes_col)
+            else:
+                likes_default_index = 0
+
             # Allow user to select likes column
             likes_column = st.selectbox(
                 "Likes column:",
-                options=list(dataset.columns),
-                index=0,
+                options=likes_column_options,
+                index=likes_default_index,
                 help="Select the column that contains the number of likes for each comment.",
                 key="llm_likes_column_select"
             )
 
             max_n = len(dataset)
-            default_n = min(100, max_n)
+            last_top_n = st.session_state.llmData.get('lastTopN', 100)
+            default_n = min(last_top_n, max_n)
             top_n = st.number_input(
                 "Number of top comments to classify (N):",
                 min_value=1,
@@ -575,6 +588,7 @@ with st.container(border=True):
             # Progress elements
             progress_bar = st.progress(0)
             status_text = st.empty()
+            time_text = st.empty()
             current_text_display = st.empty()
 
             try:
@@ -606,11 +620,38 @@ with st.container(border=True):
 
                 status_text.text(f"Classifying {total_texts} texts...")
 
-                # Progress callback
+                # Time tracking variables
+                import time
+                start_time = time.time()
+
+                # Progress callback with time estimation
                 def update_progress(current, total):
                     progress = current / total * 0.9 if total > 0 else 0
                     progress_bar.progress(progress)
                     status_text.text(f"Classifying... {current}/{total} texts")
+
+                    # Calculate time estimates
+                    if current > 0:
+                        elapsed_time = time.time() - start_time
+                        avg_time_per_text = elapsed_time / current
+                        remaining_texts = total - current
+                        estimated_remaining = avg_time_per_text * remaining_texts
+
+                        # Format time
+                        def format_time(seconds):
+                            if seconds < 60:
+                                return f"{int(seconds)}s"
+                            elif seconds < 3600:
+                                mins = int(seconds // 60)
+                                secs = int(seconds % 60)
+                                return f"{mins}m {secs}s"
+                            else:
+                                hours = int(seconds // 3600)
+                                mins = int((seconds % 3600) // 60)
+                                return f"{hours}h {mins}m"
+
+                        time_text.text(f"⏱️ Elapsed: {format_time(elapsed_time)} | Avg: {avg_time_per_text:.2f}s/text | Estimated remaining: {format_time(estimated_remaining)}")
+
                     if current <= total and current > 0:
                         preview_text = all_texts[current - 1][:100] + "..." if len(all_texts[current - 1]) > 100 else all_texts[current - 1]
                         current_text_display.text(f"Current text: {preview_text}")
@@ -666,18 +707,16 @@ with st.container(border=True):
                     st.session_state.globalData['dataset'] = results_df
                     st.session_state.llmData['classificationResults'] = results_df
 
-                    progress_bar.progress(0.98)
-                    status_text.text("Saving results...")
+                    # Save classification settings and time
+                    total_time = time.time() - start_time
+                    st.session_state.llmData['classificationTime'] = total_time
+                    if not classify_all and likes_column:
+                        st.session_state.llmData['lastLikesColumn'] = likes_column
+                        st.session_state.llmData['lastTopN'] = top_n
 
-                    # Auto-save global dataset
-                    success, result = save_global_dataset()
-
-                    if success:
-                        progress_bar.progress(1.0)
-                        status_text.text("✅ Classification completed!")
-                        st.success(f"✅ Classification completed! File saved to: `{result}`")
-                    else:
-                        st.warning(f"⚠️ Classification completed but failed to save file: {result}")
+                    progress_bar.progress(1.0)
+                    status_text.text("✅ Classification completed!")
+                    st.success(f"✅ Classification completed successfully!")
 
                     st.rerun()
 
@@ -707,6 +746,21 @@ with st.container(border=True):
     # Step 3 completion indicator
     if step3_complete:
         st.success("✅ **Step 3 completed!** Classification performed successfully.")
+
+        # Show classification time if available
+        classification_time = st.session_state.llmData.get('classificationTime')
+        if classification_time:
+            if classification_time < 60:
+                time_str = f"{classification_time:.1f}s"
+            elif classification_time < 3600:
+                mins = int(classification_time // 60)
+                secs = int(classification_time % 60)
+                time_str = f"{mins}m {secs}s"
+            else:
+                hours = int(classification_time // 3600)
+                mins = int((classification_time % 3600) // 60)
+                time_str = f"{hours}h {mins}m"
+            st.info(f"⏱️ **Classification completed in:** {time_str}")
 
         # Results Preview
         st.markdown("---")
