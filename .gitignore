@@ -2,5 +2,4 @@
 .conda/
 keys.txt
 correções.txt
-monarkComentarios.json
-vizualization.py
+venv/

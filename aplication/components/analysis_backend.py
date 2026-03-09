@@ -968,16 +968,29 @@ def create_time_series_chart(df, datetime_col, classifier_type, threshold, selec
         # Create line chart
         fig = go.Figure()
 
+        # Total comments bar (always shown as background reference)
+        df_total_bert = df_work.groupby('date_hour').size().reset_index(name='total_count')
+        fig.add_trace(go.Bar(
+            x=df_total_bert['date_hour'],
+            y=df_total_bert['total_count'],
+            name='Total Comments',
+            marker=dict(color='rgba(30, 136, 229, 0.35)'),
+            hovertemplate='<b>Total Comments</b><br>Count: %{y}<extra></extra>'
+        ))
+
+        use_sentiment_colors = all(c.strip().lower() in sentiment_color_map for c in selected_classes)
+
         for class_name in selected_classes:
             df_class = df_ts[df_ts['class'] == class_name]
             if len(df_class) > 0:
+                color = sentiment_color_map.get(class_name.strip().lower()) if use_sentiment_colors else None
                 fig.add_trace(go.Scatter(
                     x=df_class['datetime'],
                     y=df_class['count'],
                     mode='lines+markers',
                     name=class_name,
-                    line=dict(width=2),
-                    marker=dict(size=6)
+                    line=dict(color=color, width=2) if color else dict(width=2),
+                    marker=dict(color=color, size=6) if color else dict(size=6)
                 ))
 
         fig.update_layout(
@@ -1025,16 +1038,29 @@ def create_time_series_chart(df, datetime_col, classifier_type, threshold, selec
         # Create line chart
         fig = go.Figure()
 
+        # Total comments bar (always shown as background reference)
+        df_total_detox = df_work.groupby('date_hour').size().reset_index(name='total_count')
+        fig.add_trace(go.Bar(
+            x=df_total_detox['date_hour'],
+            y=df_total_detox['total_count'],
+            name='Total Comments',
+            marker=dict(color='rgba(30, 136, 229, 0.35)'),
+            hovertemplate='<b>Total Comments</b><br>Count: %{y}<extra></extra>'
+        ))
+
+        use_sentiment_colors = all(c.strip().lower() in sentiment_color_map for c in selected_classes)
+
         for class_name in selected_classes:
             df_class = df_ts[df_ts['class'] == class_name]
             if len(df_class) > 0:
+                color = sentiment_color_map.get(class_name.strip().lower()) if use_sentiment_colors else None
                 fig.add_trace(go.Scatter(
                     x=df_class['datetime'],
                     y=df_class['count'],
                     mode='lines+markers',
                     name=class_name,
-                    line=dict(width=2),
-                    marker=dict(size=6)
+                    line=dict(color=color, width=2) if color else dict(width=2),
+                    marker=dict(color=color, size=6) if color else dict(size=6)
                 ))
 
         fig.update_layout(
@@ -1077,16 +1103,29 @@ def create_time_series_chart(df, datetime_col, classifier_type, threshold, selec
         # Create line chart
         fig = go.Figure()
 
+        # Total comments bar (always shown as background reference)
+        df_total_llm = df_work.groupby('date_hour').size().reset_index(name='total_count')
+        fig.add_trace(go.Bar(
+            x=df_total_llm['date_hour'],
+            y=df_total_llm['total_count'],
+            name='Total Comments',
+            marker=dict(color='rgba(30, 136, 229, 0.35)'),
+            hovertemplate='<b>Total Comments</b><br>Count: %{y}<extra></extra>'
+        ))
+
+        use_sentiment_colors = all(c.strip().lower() in sentiment_color_map for c in selected_classes)
+
         for class_name in selected_classes:
             df_class = df_ts[df_ts['class'] == class_name]
             if len(df_class) > 0:
+                color = sentiment_color_map.get(class_name.strip().lower()) if use_sentiment_colors else None
                 fig.add_trace(go.Scatter(
                     x=df_class['datetime'],
                     y=df_class['count'],
                     mode='lines+markers',
                     name=class_name,
-                    line=dict(width=2),
-                    marker=dict(size=6)
+                    line=dict(color=color, width=2) if color else dict(width=2),
+                    marker=dict(color=color, size=6) if color else dict(size=6)
                 ))
 
         fig.update_layout(

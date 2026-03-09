@@ -1,200 +1,111 @@
-# 🚀 Toxicytube 2.0
+# Toxytube 2.0
 
-A complete and intuitive platform for conducting content moderation studies without writing code. Analyze text toxicity using multiple machine learning classifiers.
+Web application for collecting, classifying and analyzing YouTube comments using multiple text classification models.
 
-![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)
-![Streamlit](https://img.shields.io/badge/Streamlit-1.47+-red.svg)
+## Description
 
-## 📋 Table of Contents
+Toxytube 2.0 is a tool developed in Streamlit that allows you to collect YouTube comments and automatically classify them using three different machine learning approaches:
 
-- [About the Project](#-about-the-project)
-- [Features](#-features)
-- [Requirements](#-requirements)
-- [Installation](#-installation)
-- [How to Run](#-how-to-run)
-- [Project Structure](#-project-structure)
-- [Available Classifiers](#-available-classifiers)
-- [Usage](#-usage)
-- [Technologies Used](#-technologies-used)
+- **BERT Classifier**: Transformer-based model for text classification
+- **Detoxify Classifier**: Model specialized in toxicity detection
+- **LLM Classifier**: Classification using Large Language Models via DSPy
 
-## 🎯 About the Project
+The application also offers comparative visualizations of results, including agreement analysis between models, time series and class distributions.
 
-Toxicytube 2.0 is a web application developed with Streamlit that enables text toxicity analysis using different classification approaches. The project was created to facilitate content moderation studies, especially focused on YouTube comments, but compatible with any text dataset.
+## Features
 
-## ✨ Features
+- YouTube comments collection via Google API
+- Custom dataset upload in CSV format
+- Text classification with BERT, Detoxify and LLM
+- Comparative analysis of results between the three classifiers
+- Interactive visualizations:
+  - Class distribution by model
+  - Agreement between BERT and LLM
+  - Detoxify threshold analysis
+  - Time series of classifications
+  - Word cloud
+- Export of classified results
 
-### 📁 Dataset Upload
-- Support for multiple formats: CSV, Excel (XLSX/XLS), JSON, Parquet
-- Text column configuration for classification
-- Export results in different formats
+## Requirements
 
-### 🎥 YouTube Comments Collection
-- Automated collection via YouTube Data API v3
-- Detailed video information (views, likes, duration)
-- Export collected comments
+- Python 3.11 or higher
+- Google API key (for YouTube comments collection)
+- LLM API key compatible with LiteLLM (for LLM classifier)
 
-### 🤖 BERT Classifier
-- Compatible with any BERT model from Hugging Face
-- Support for BERT, RoBERTa, DistilBERT, XLNet, etc.
-- Automatic GPU/CPU detection
-- Batch classification with progress bar
+## Installation
 
-### 🛡️ Detoxify Classifier
-- Three available models:
-  - **Original**: Trained on Toxic Comment Classification Challenge
-  - **Unbiased**: Trained on unbiased data
-  - **Multilingual**: Multi-language support (XLM-RoBERTa)
-- Detects: toxicity, obscenity, threats, insults, hate speech
+### 1. Clone the repository
 
-### 🧠 LLM Classifier
-- Integration with multiple providers via LiteLLM:
-  - **OpenAI**: GPT-4o, GPT-4o Mini, GPT-4 Turbo, GPT-3.5 Turbo
-  - **Anthropic**: Claude 3.5 Sonnet, Claude 3.5 Haiku, Claude 3 Opus
-  - **Google**: Gemini 1.5 Pro, Gemini 1.5 Flash, Gemini 2.0 Flash
-  - **Groq**: Llama 3.3 70B, Llama 3.1 8B, Mixtral 8x7B
-  - **Mistral AI**: Mistral Large, Mistral Small
-  - **DeepSeek**: DeepSeek Chat, DeepSeek Reasoner
-- Customizable prompts with DSPy
-- Custom label system
+```bash
+git clone <repository-url>
+cd Toxytube_2.0
+```
 
-### 📊 Classified Data Analysis
-- Class distribution visualization
-- Threshold charts for probabilities
-- Time series analysis
-- Word cloud
-- Top comments table
+### 2. Set up virtual environment
 
-## 💻 Requirements
+Install python3-venv package (if necessary):
 
-- Python 3.10 or higher
-- pip (Python package manager)
-- Internet connection (to download models and use APIs)
-- GPU (optional, but recommended for BERT/Detoxify classifiers)
+```bash
+sudo apt install python3.12-venv
+```
 
-## 🔧 Installation
+Create and activate the virtual environment:
 
-1. **Clone the repository**
-   ```bash
-   git clone https://github.com/your-username/Toxytube_2.0.git
-   cd Toxytube_2.0
-   ```
+```bash
+python3 -m venv venv
+source venv/bin/activate
+```
 
-2. **Create a virtual environment (recommended)**
-   ```bash
-   python -m venv venv
-   source venv/bin/activate  # Linux/Mac
-   # or
-   venv\Scripts\activate  # Windows
-   ```
+### 3. Install dependencies
 
-3. **Install dependencies**
-   ```bash
-   pip install -r requirements.txt
-   ```
+```bash
+pip install -r requirements.txt
+```
 
-## 🚀 How to Run
+### 4. Download NLTK resources
 
-1. **Navigate to the application folder**
-   ```bash
-   cd aplication
-   ```
+On first run, the application will automatically download the necessary NLTK resources (stopwords).
 
-2. **Run Streamlit**
-   ```bash
-   streamlit run Home.py
-   ```
+## Running the application
 
-3. **Access in browser**
-   ```
-   http://localhost:8501
-   ```
+With the virtual environment active:
 
-## 📂 Project Structure
+```bash
+cd aplication
+streamlit run Home.py
+```
+
+The application will be available at `http://localhost:8501`
+
+## Project structure
 
 ```
 Toxytube_2.0/
-├── readme.md                    # This file
-├── requirements.txt             # Project dependencies
-└── aplication/
-    ├── Home.py                  # Home page
-    ├── assets/                  # Static resources
-    ├── components/              # Reusable components
-    │   ├── detoxify_classifier.py   # Detoxify backend
-    │   ├── llm_classifier.py        # LLM backend
-    │   ├── navigation.py            # Application navigation
-    │   ├── text_classifier.py       # BERT backend
-    │   └── youtube_collector.py     # YouTube collector
-    └── pages/                   # Application pages
-        ├── 0_Dataset_Upload.py      # Dataset upload
-        ├── 1_YouTube_Comments.py    # YouTube collection
-        ├── 2_Bert_Classifier.py     # BERT classifier
-        ├── 3_Detoxify_Classifier.py # Detoxify classifier
-        ├── 4_LLM_Classifier.py      # LLM classifier
-        └── 5_Classified_Data_Analysis.py # Data analysis
+├── aplication/
+│   ├── Home.py                          # Main page
+│   ├── components/
+│   │   ├── analysis_backend.py          # Analysis logic and visualizations
+│   │   ├── detoxify_classifier.py       # Detoxify classifier
+│   │   ├── llm_classifier.py            # LLM classifier
+│   │   ├── navigation.py                # Navigation system
+│   │   ├── text_classifier.py           # BERT classifier
+│   │   └── youtube_collector.py         # YouTube comments collection
+│   └── pages/
+│       ├── 0_Dataset_Upload.py          # Dataset upload
+│       ├── 1_YouTube_Comments.py        # Comments collection
+│       ├── 2_Bert_Classifier.py         # BERT interface
+│       ├── 3_Detoxify_Classifier.py     # Detoxify interface
+│       ├── 4_LLM_Classifier.py          # LLM interface
+│       └── 5_Classified_Data_Analysis.py # Comparative analysis
+├── requirements.txt                     # Project dependencies
+├── keys.txt                             # API keys (not versioned)
+└── .gitignore
 ```
 
-## 🔬 Available Classifiers
+## Recommended workflow
 
-### BERT Classifier
-Uses transformer-based models from Hugging Face. Recommendations:
-- `unitary/toxic-bert` - Toxicity classification
-- `cardiffnlp/twitter-roberta-base-sentiment` - Sentiment analysis
-- `facebook/roberta-hate-speech-dynabench-r4-target` - Hate speech detection
-
-### Detoxify
-| Model | Description | Labels |
-|-------|-------------|--------|
-| Original | Toxicity Challenge | toxic, severe_toxic, obscene, threat, insult, identity_hate |
-| Unbiased | Unbiased data | toxic, severe_toxic, obscene, threat, insult, identity_attack, sexual_explicit |
-| Multilingual | Multi-language | toxic, severe_toxic, obscene, threat, insult, identity_attack |
-
-### LLM Classifier
-Requires API key from the chosen provider:
-- `OPENAI_API_KEY` for OpenAI models
-- `ANTHROPIC_API_KEY` for Anthropic models
-- `GEMINI_API_KEY` for Google models
-- `GROQ_API_KEY` for Groq models
-- `MISTRAL_API_KEY` for Mistral models
-- `DEEPSEEK_API_KEY` for DeepSeek models
-
-## 📖 Usage
-
-### Basic Workflow
-
-1. **Dataset Upload**
-   - Access "Dataset Upload" in the sidebar menu
-   - Upload file (CSV, Excel, JSON, or Parquet)
-   - Select text column for classification
-   - Configure output file name and format
-
-2. **Classification**
-   - Choose one of the classifiers (BERT, Detoxify, or LLM)
-   - Configure the desired model
-   - Run classification
-   - Results are automatically added to the dataset
-
-3. **Analysis**
-   - Access "Classified Data Analysis"
-   - Visualize distribution charts
-   - Compare results between classifiers
-   - Export classified data
-
-### YouTube Collection
-
-1. Obtain a [YouTube Data API v3](https://console.cloud.google.com/) key
-2. Access "YouTube Comments"
-3. Enter video URL and API key
-4. Configure number of comments and output format
-5. Execute collection
-
-## 🛠️ Technologies Used
-
-- **[Streamlit](https://streamlit.io/)** - Web framework
-- **[Transformers](https://huggingface.co/transformers/)** - BERT models
-- **[Detoxify](https://github.com/unitaryai/detoxify)** - Toxicity classification
-- **[LiteLLM](https://github.com/BerriAI/litellm)** - Unified API for LLMs
-- **[DSPy](https://github.com/stanfordnlp/dspy)** - Structured prompting
-- **[PyTorch](https://pytorch.org/)** - Deep learning framework
-- **[Pandas](https://pandas.pydata.org/)** - Data manipulation
-- **[Plotly](https://plotly.com/)** - Interactive visualizations
-- **[WordCloud](https://github.com/amueller/word_cloud)** - Word cloud
+1. **Initial setup**: Configure the dataset and text column on the Home page
+2. **Data collection**: Use the "YouTube Comments" page to collect comments OR upload a CSV dataset
+3. **Classification**: Run the three classifiers (BERT, Detoxify and LLM) on the texts
+4. **Analysis**: View and compare results on the "Classified Data Analysis" page
+5. **Export**: Download the classified results for further analysis

@@ -509,9 +509,10 @@ if config_status['complete']:
                             class_counts[label] = count
 
                 if class_counts:
-                    # Create bar chart
-                    labels = list(class_counts.keys())
-                    values = list(class_counts.values())
+                    # Create bar chart — sorted by count descending
+                    sorted_items = sorted(class_counts.items(), key=lambda x: x[1], reverse=True)
+                    labels = [item[0] for item in sorted_items]
+                    values = [item[1] for item in sorted_items]
 
                     # Build colors using shared palette and sentiment overrides
                     colors = []
